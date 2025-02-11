@@ -98,7 +98,7 @@ impl Hashable for StarknetDomain {
 }
 
 impl Hashable for Order {
-    const SELECTOR: Felt = selector!("\"Order\"(\"position_id\":\"felt\",\"base_asset_id\":\"AssetId\",\"base_amount\":\"i64\",\"quote_asset_id\":\"AssetId\",\"quote_amount\":\"i64\",\"fee_asset_id\":\"AssetId\",\"fee_amount\":\"u64\",\"expiration\":\"Timestamp\",\"salt\":\"felt\")\"PositionId\"(\"value\":\"felt\")\"AssetId\"(\"value\":\"felt\")\"Timestamp\"(\"seconds\":\"u64\")");
+    const SELECTOR: Felt = selector!("\"Order\"(\"position_id\":\"felt\",\"base_asset_id\":\"AssetId\",\"base_amount\":\"i64\",\"quote_asset_id\":\"AssetId\",\"quote_amount\":\"i64\",\"fee_asset_id\":\"AssetId\",\"fee_amount\":\"u64\",\"expiration\":\"Timestamp\",\"salt\":\"felt\")\"PositionId\"(\"value\":\"u32\")\"AssetId\"(\"value\":\"felt\")\"Timestamp\"(\"seconds\":\"u64\")");
     fn hash(&self) -> Felt {
         let mut hasher = PoseidonHasher::new();
         hasher.update(Self::SELECTOR);
@@ -213,7 +213,7 @@ mod tests {
     #[test]
     fn test_order_selector() {
         let expected = Felt::from_hex_unchecked(
-            "0x26e3f2492aae9866d09bd1635084175acbb80a33730cd0f2314b21c7f9d47eb",
+            "0x36da8d51815527cabfaa9c982f564c80fa7429616739306036f1f9b608dd112",
         );
         let actual = Order::SELECTOR;
         assert_eq!(expected, actual);
@@ -243,7 +243,7 @@ mod tests {
 
         let actual = order.hash();
         let expected = Felt::from_dec_str(
-            "946920802435170097603289101599594900042939783390096257589678239726650388230",
+            "1329353150252109345267997901008558234696410103652961347079636617692652241760",
         )
         .unwrap();
         assert_eq!(actual, expected, "Hashes do not match for Order");
@@ -285,7 +285,7 @@ mod tests {
 
         let actual = order.message_hash(&domain, user_key);
         let expected = Felt::from_dec_str(
-            "2065028989800275619145929126273137957172733560534383417997414892126195744726",
+            "3559137314357580250225045579982347433506065673155604628328162977413817687741",
         )
         .unwrap();
 
