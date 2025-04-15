@@ -1,294 +1,70 @@
-use core::hash;
-
-use serde_json;
-use starknet::{
-    core::{
-        types::{TypedData, U256},
-        utils::cairo_short_string_to_felt,
-    },
-    macros::{felt, selector},
-};
+use hex;
+use sha2::{Digest, Sha256};
 use starknet_crypto::Felt;
-use starknet_crypto::PoseidonHasher;
+use num_bigint::BigUint;
+use std::str::FromStr;
+pub mod starknet_messages;
 
-use lazy_static::lazy_static;
+pub(crate) fn grind_key(key_seed: BigUint) -> BigUint {
+    let two_256 = BigUint::from_str(
+        "115792089237316195423570985008687907853269984665640564039457584007913129639936",
+    )
+    .unwrap();
+    let key_value_limit = BigUint::from_str(
+        "3618502788666131213697322783095070105526743751716087489154079457884512865583",
+    )
+    .unwrap();
 
-lazy_static! {
-    static ref MESSAGE_FELT: Felt = cairo_short_string_to_felt("StarkNet Message").unwrap();
-}
+    let max_allowed_value = two_256.clone() - (two_256.clone() % (&key_value_limit));
+    let mut index = BigUint::ZERO;
+    loop {
+        let hash_input = {
+            let mut input = Vec::new();
+            input.extend_from_slice(&key_seed.to_bytes_be());
+            input.extend_from_slice(&index.to_bytes_be());
+            input
+        };
+        let hash_result = Sha256::digest(&hash_input);
+        let hash = hash_result.as_slice();
+        let key = BigUint::from_bytes_be(&hash);
 
-trait Hashable {
-    const SELECTOR: Felt;
-    fn hash(&self) -> Felt;
-}
+        if key < max_allowed_value {
+            return key % (&key_value_limit);
+        }
 
-trait OffChainMessage: Hashable {
-    fn message_hash(&self, stark_domain: &StarknetDomain, public_key: Felt) -> Option<Felt> {
-        // let mut state = PoseidonTrait::new();
-        // state = state.update_with('StarkNet Message');
-        // state = state.update_with(domain.hash_struct());
-        // state = state.update_with(public_key);
-        // state = state.update_with(self.hash_struct());
-        // state.finalize()
-
-        let mut hasher = PoseidonHasher::new();
-        hasher.update(*MESSAGE_FELT);
-        hasher.update(stark_domain.hash());
-        hasher.update(public_key);
-        hasher.update(self.hash());
-        Some(hasher.finalize())
+        index += BigUint::from_str("1").unwrap();
     }
 }
 
-pub struct Timestamp {
-    pub seconds: u64,
-}
-
-pub struct Order {
-    pub position_id: PositionId,
-    pub base_asset_id: AssetId,
-    pub base_amount: i64,
-    pub quote_asset_id: AssetId,
-    pub quote_amount: i64,
-    pub fee_asset_id: AssetId,
-    pub fee_amount: u64,
-    pub expiration: Timestamp,
-    pub salt: Felt,
-}
-
-pub struct StarknetDomain {
-    pub name: String,
-    pub version: String,
-    pub chain_id: String,
-    pub revision: String,
-}
-
-pub struct AssetId {
-    pub value: Felt,
-}
-pub struct PositionId {
-    pub value: Felt,
-}
-
-pub struct AssetAmount {
-    pub asset_id: AssetId,
-    pub amount: i64,
-}
-
-pub struct TransferArgs {
-    pub position_id: u32,
-    pub recipient: u32,
-    pub salt: Felt,
-    pub expiration: u64,
-    pub collateral: AssetAmount,
-}
-
-impl Hashable for StarknetDomain {
-    const SELECTOR: Felt = selector!("\"StarknetDomain\"(\"name\":\"shortstring\",\"version\":\"shortstring\",\"chainId\":\"shortstring\",\"revision\":\"shortstring\")");
-
-    fn hash(&self) -> Felt {
-        let mut hasher = PoseidonHasher::new();
-        hasher.update(Self::SELECTOR);
-        hasher.update(cairo_short_string_to_felt(&self.name).unwrap());
-        hasher.update(cairo_short_string_to_felt(&self.version).unwrap());
-        hasher.update(cairo_short_string_to_felt(&self.chain_id).unwrap());
-        hasher.update(cairo_short_string_to_felt(&self.revision).unwrap());
-        hasher.finalize()
+pub fn get_private_key_from_eth_signature(signature: &str) -> Result<Felt, String> {
+    let eth_sig_truncated = signature.trim_start_matches("0x");
+    if eth_sig_truncated.len() < 64 {
+        return Err("Invalid signature length".to_string());
     }
-}
+    let r = &eth_sig_truncated[..64];
+    let r_bytes = hex::decode(r).map_err(|e| format!("Failed to decode r as hex: {:?}", e))?;
+    let r_int = BigUint::from_bytes_be(&r_bytes);
 
-impl Hashable for Order {
-    const SELECTOR: Felt = selector!("\"Order\"(\"position_id\":\"felt\",\"base_asset_id\":\"AssetId\",\"base_amount\":\"i64\",\"quote_asset_id\":\"AssetId\",\"quote_amount\":\"i64\",\"fee_asset_id\":\"AssetId\",\"fee_amount\":\"u64\",\"expiration\":\"Timestamp\",\"salt\":\"felt\")\"PositionId\"(\"value\":\"u32\")\"AssetId\"(\"value\":\"felt\")\"Timestamp\"(\"seconds\":\"u64\")");
-    fn hash(&self) -> Felt {
-        let mut hasher = PoseidonHasher::new();
-        hasher.update(Self::SELECTOR);
-        hasher.update(self.position_id.value.into());
-        hasher.update(self.base_asset_id.value.into());
-        hasher.update(self.base_amount.into());
-        hasher.update(self.quote_asset_id.value.into());
-        hasher.update(self.quote_amount.into());
-        hasher.update(self.fee_asset_id.value.into());
-        hasher.update(self.fee_amount.into());
-        hasher.update(self.expiration.seconds.into());
-        hasher.update(self.salt.into());
-        hasher.finalize()
-    }
-}
-
-impl OffChainMessage for Order {}
-
-impl Hashable for TransferArgs {
-    const SELECTOR: Felt = selector!(
-        "\"TransferArgs\"(
-        \"position_id\":\"PositionId\",
-        \"recipient\":\"PositionId\",
-        \"salt\":\"felt\",
-        \"expiration\":\"Timestamp\",
-        \"collateral\":\"AssetAmount\"
-      )\"PositionId\"(\"value\":\"felt\")\"Timestamp\"(\"seconds\":\"u64\")\"AssetAmount\"(\"asset_id\":\"AssetId\",\"amount\":\"i64\")\"AssetId\"(\"value\":\"felt\")"
-    );
-
-    fn hash(&self) -> Felt {
-        let mut hasher = PoseidonHasher::new();
-        hasher.update(Self::SELECTOR);
-        hasher.update(self.position_id.into());
-        hasher.update(self.recipient.into());
-        hasher.update(self.salt.into());
-        hasher.update(self.expiration.into());
-        hasher.update(self.collateral.asset_id.value.into());
-        hasher.update(self.collateral.amount.into());
-        hasher.finalize()
-    }
+    let ground_key = grind_key(r_int);
+    return Ok(Felt::from_hex(&ground_key.to_str_radix(16)).unwrap());
 }
 
 #[cfg(test)]
 mod tests {
-    use starknet::{
-        core::types::Felt,
-        macros::{felt_dec, selector},
-    };
-    use starknet_crypto::PoseidonHasher;
-
     use super::*;
 
     #[test]
-    fn go_for_it() {
-        let args = TransferArgs {
-            position_id: 1,
-            recipient: 2,
-            salt: 3.into(),
-            expiration: 4,
-            collateral: AssetAmount {
-                asset_id: AssetId { value: 5.into() },
-                amount: 6,
-            },
-        };
+    fn test_get_private_key_from_eth_signature() {
+        let signature = "0x9ef64d5936681edf44b4a7ad713f3bc24065d4039562af03fccf6a08d6996eab367df11439169b417b6a6d8ce81d409edb022597ce193916757c7d5d9cbf97301c";
+        let result = get_private_key_from_eth_signature(signature);
 
-        let mut hasher = PoseidonHasher::new();
-        hasher.update(
-            Felt::from_hex(
-                &selector!(
-                "\"TransferArgs\"(\"position_id\":\"PositionId\",\"recipient\":\"PositionId\",\"salt\":\"felt\",\"expiration\":\"Timestamp\",\"collateral\":\"AssetAmount\")\"PositionId\"(\"value\":\"felt\")\"Timestamp\"(\"seconds\":\"u64\")\"AssetAmount\"(\"asset_id\":\"AssetId\",\"amount\":\"i64\")\"AssetId\"(\"value\":\"felt\")"
-            ).to_hex_string()).unwrap(),
-        );
-        hasher.update(args.position_id.into());
-        hasher.update(args.recipient.into());
-        hasher.update(args.salt.into());
-        hasher.update(args.expiration.into());
-        hasher.update(args.collateral.asset_id.value.into());
-        hasher.update(args.collateral.amount.into());
-
-        let hash_value = hasher.finalize().to_hex_string();
-        assert_eq!(
-            hash_value,
-            "0x4bad2287e5c6e12d33c63ed020e0e9c4b30bbdcb1bc4967fc6ff372180266e5"
-        );
-    }
-
-    #[test]
-    fn test_starknet_domain_selector() {
-        let expected = Felt::from_hex_unchecked(
-            "0x1ff2f602e42168014d405a94f75e8a93d640751d71d16311266e140d8b0a210",
-        );
-        let actual = StarknetDomain::SELECTOR;
-        assert_eq!(expected, actual);
-    }
-
-    #[test]
-    fn test_starknet_domain_hashing() {
-        let domain = StarknetDomain {
-            name: "DAPP_NAME".to_string(),
-            version: "v1".to_string(),
-            chain_id: "TEST".to_string(),
-            revision: "1".to_string(),
-        };
-
-        let actual = domain.hash();
-        let expected = felt_dec!(
-            "3433281071040767640814709368600706933598428900379824095511832833121789562575"
-        );
-        assert_eq!(actual, expected, "Hashes do not match for StarknetDomain");
-    }
-
-    #[test]
-    fn test_order_selector() {
-        let expected = Felt::from_hex_unchecked(
-            "0x36da8d51815527cabfaa9c982f564c80fa7429616739306036f1f9b608dd112",
-        );
-        let actual = Order::SELECTOR;
-        assert_eq!(expected, actual);
-    }
-
-    #[test]
-    fn test_order_hashing() {
-        let order = Order {
-            position_id: PositionId {
-                value: Felt::from_dec_str("1").unwrap(),
-            },
-            base_asset_id: AssetId {
-                value: Felt::from_dec_str("2").unwrap(),
-            },
-            base_amount: 3,
-            quote_asset_id: AssetId {
-                value: Felt::from_dec_str("4").unwrap(),
-            },
-            quote_amount: 5,
-            fee_asset_id: AssetId {
-                value: Felt::from_dec_str("6").unwrap(),
-            },
-            fee_amount: 7,
-            expiration: Timestamp { seconds: 8 },
-            salt: Felt::from_dec_str("9").unwrap(),
-        };
-
-        let actual = order.hash();
-        let expected = Felt::from_dec_str(
-            "1329353150252109345267997901008558234696410103652961347079636617692652241760",
-        )
-        .unwrap();
-        assert_eq!(actual, expected, "Hashes do not match for Order");
-    }
-
-    #[test]
-    fn test_message_hash() {
-        let domain = StarknetDomain {
-            name: "Perpetuals".to_string(),
-            version: "v0".to_string(),
-            chain_id: "SN_SEPOLIA".to_string(),
-            revision: "1".to_string(),
-        };
-
-        let user_key = Felt::from_dec_str(
-            "2629686405885377265612250192330550814166101744721025672593857097107510831364",
-        )
-        .unwrap();
-
-        let order = Order {
-            position_id: PositionId {
-                value: Felt::from_dec_str("1").unwrap(),
-            },
-            base_asset_id: AssetId {
-                value: Felt::from_dec_str("2").unwrap(),
-            },
-            base_amount: 3,
-            quote_asset_id: AssetId {
-                value: Felt::from_dec_str("4").unwrap(),
-            },
-            quote_amount: 5,
-            fee_asset_id: AssetId {
-                value: Felt::from_dec_str("6").unwrap(),
-            },
-            fee_amount: 7,
-            expiration: Timestamp { seconds: 8 },
-            salt: Felt::from_dec_str("9").unwrap(),
-        };
-
-        let actual = order.message_hash(&domain, user_key);
-        let expected = Felt::from_dec_str(
-            "3559137314357580250225045579982347433506065673155604628328162977413817687741",
-        )
-        .unwrap();
-
-        assert_eq!(actual, Some(expected), "Hashes do not match for Order");
+        match result {
+            Ok(private_key) => {
+                assert_eq!(private_key, Felt::from_dec_str("3554363360756768076148116215296798451844584215587910826843139626172125285444").unwrap());
+            }
+            Err(err) => {
+                panic!("Expected Ok, got Err: {}", err);
+            }
+        }
     }
 }
