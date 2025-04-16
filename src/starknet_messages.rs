@@ -87,11 +87,37 @@ impl Hashable for Order {
         hasher.update(self.fee_asset_id.value.into());
         hasher.update(self.fee_amount.into());
         hasher.update(self.expiration.seconds.into());
-        hasher.update(self.salt.into());
+        hasher.update(self.salt);
         hasher.finalize()
     }
 }
 impl OffChainMessage for Order {}
+
+pub struct TransferArgs {
+    pub recipient: PositionId,
+    pub position_id: PositionId,
+    pub collateral_id: AssetId,
+    pub amount: u64,
+    pub expiration: Timestamp,
+    pub salt: Felt,
+}
+
+impl Hashable for TransferArgs {
+    const SELECTOR: Felt = selector!("\"TransferArgs\"(\"recipient\":\"PositionId\",\"position_id\":\"PositionId\",\"collateral_id\":\"AssetId\",\"amount\":\"u64\",\"expiration\":\"Timestamp\",\"salt\":\"felt\")\"PositionId\"(\"value\":\"u32\")\"AssetId\"(\"value\":\"felt\")\"Timestamp\"(\"seconds\":\"u64\")");
+    fn hash(&self) -> Felt {
+        let mut hasher = PoseidonHasher::new();
+        hasher.update(Self::SELECTOR);
+        hasher.update(self.recipient.value.into());
+        hasher.update(self.position_id.value.into());
+        hasher.update(self.collateral_id.value.into());
+        hasher.update(self.amount.into());
+        hasher.update(self.expiration.seconds.into());
+        hasher.update(self.salt);
+        hasher.finalize()
+    }
+}
+
+impl OffChainMessage for TransferArgs {}
 
 pub static SEPOLIA_DOMAIN: LazyLock<StarknetDomain> = LazyLock::new(|| StarknetDomain {
     name: "Perpetuals".to_string(),
@@ -132,16 +158,6 @@ mod tests {
     }
 
     #[test]
-    fn test_hash_sepolia_domain() {
-        let hash = SEPOLIA_DOMAIN.hash();
-        assert_ne!(
-            hash,
-            Felt::default(),
-            "Hash should not be the default value"
-        );
-    }
-
-    #[test]
     fn test_order_selector() {
         let expected = Felt::from_hex_unchecked(
             "0x36da8d51815527cabfaa9c982f564c80fa7429616739306036f1f9b608dd112",
@@ -151,11 +167,69 @@ mod tests {
     }
 
     #[test]
+    fn test_transfer_args_selector() {
+        let expected = Felt::from_hex_unchecked(
+            "0x1db88e2709fdf2c59e651d141c3296a42b209ce770871b40413ea109846a3b4",
+        );
+        let actual = TransferArgs::SELECTOR;
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_transfer_args_hashing() {
+        let transfer_args = TransferArgs {
+            recipient: PositionId { value: 1 },
+            position_id: PositionId { value: 2 },
+            collateral_id: AssetId {
+                value: Felt::from_dec_str("3").unwrap(),
+            },
+            amount: 4,
+            expiration: Timestamp { seconds: 5 },
+            salt: Felt::from_dec_str("6").unwrap(),
+        };
+
+        let actual = transfer_args.hash();
+        let expected = Felt::from_dec_str(
+            "2223969487713427665389808888239017784545324676732964616876966103908214316949",
+        )
+        .unwrap();
+        assert_eq!(actual, expected, "Hashes do not match for TransferArgs");
+    }
+
+    #[test]
+    fn test_message_hash_transfer() {
+        let transfer_args = TransferArgs {
+            recipient: PositionId { value: 1 },
+            position_id: PositionId { value: 2 },
+            collateral_id: AssetId {
+                value: Felt::from_dec_str("3").unwrap(),
+            },
+            amount: 4,
+            expiration: Timestamp { seconds: 5 },
+            salt: Felt::from_dec_str("6").unwrap(),
+        };
+
+        let user_key = Felt::from_dec_str(
+            "2629686405885377265612250192330550814166101744721025672593857097107510831364",
+        )
+        .unwrap();
+
+        let actual = transfer_args
+            .message_hash(&SEPOLIA_DOMAIN, user_key)
+            .unwrap();
+
+        let expected = Felt::from_dec_str(
+            "3466709383481810859947861276094399756712395853968834582933311835633294184917",
+        )
+        .unwrap();
+
+        assert_eq!(actual, expected, "Hashes do not match for TransferArgs");
+    }
+
+    #[test]
     fn test_order_hashing() {
         let order = Order {
-            position_id: PositionId {
-                value: 1,
-            },
+            position_id: PositionId { value: 1 },
             base_asset_id: AssetId {
                 value: Felt::from_dec_str("2").unwrap(),
             },
