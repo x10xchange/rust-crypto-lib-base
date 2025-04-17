@@ -1,11 +1,18 @@
 use hex;
-use sha2::{Digest, Sha256};
-use starknet_crypto::Felt;
 use num_bigint::BigUint;
+use sha2::{Digest, Sha256};
+use starknet::core::crypto::ecdsa_sign;
+use starknet_crypto::Felt;
 use std::str::FromStr;
 pub mod starknet_messages;
 
-pub(crate) fn grind_key(key_seed: BigUint) -> BigUint {
+pub struct StarkSignature {
+    pub r: Felt,
+    pub s: Felt,
+    pub v: Felt,
+}
+
+fn grind_key(key_seed: BigUint) -> BigUint {
     let two_256 = BigUint::from_str(
         "115792089237316195423570985008687907853269984665640564039457584007913129639936",
     )
@@ -47,6 +54,16 @@ pub fn get_private_key_from_eth_signature(signature: &str) -> Result<Felt, Strin
 
     let ground_key = grind_key(r_int);
     return Ok(Felt::from_hex(&ground_key.to_str_radix(16)).unwrap());
+}
+
+pub fn sign_message(message: &Felt, private_key: &Felt) -> Result<StarkSignature, String> {
+    return ecdsa_sign(private_key, &message)
+        .map(|extended_signature| StarkSignature {
+            r: extended_signature.r,
+            s: extended_signature.s,
+            v: extended_signature.v,
+        })
+        .map_err(|e| format!("Failed to sign message: {:?}", e));
 }
 
 #[cfg(test)]

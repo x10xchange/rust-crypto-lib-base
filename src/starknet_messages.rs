@@ -222,7 +222,6 @@ mod tests {
             "3466709383481810859947861276094399756712395853968834582933311835633294184917",
         )
         .unwrap();
-
         assert_eq!(actual, expected, "Hashes do not match for TransferArgs");
     }
 
