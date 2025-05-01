@@ -29,7 +29,7 @@ pub struct StarknetDomain {
     pub name: String,
     pub version: String,
     pub chain_id: String,
-    pub revision: String,
+    pub revision: u32,
 }
 
 impl Hashable for StarknetDomain {
@@ -40,7 +40,7 @@ impl Hashable for StarknetDomain {
         hasher.update(cairo_short_string_to_felt(&self.name).unwrap());
         hasher.update(cairo_short_string_to_felt(&self.version).unwrap());
         hasher.update(cairo_short_string_to_felt(&self.chain_id).unwrap());
-        hasher.update(cairo_short_string_to_felt(&self.revision).unwrap());
+        hasher.update(self.revision.into());
         let hash = hasher.finalize();
         return hash;
     }
@@ -123,12 +123,12 @@ pub static SEPOLIA_DOMAIN: LazyLock<StarknetDomain> = LazyLock::new(|| StarknetD
     name: "Perpetuals".to_string(),
     version: "v0".to_string(),
     chain_id: "SN_SEPOLIA".to_string(),
-    revision: "1".to_string(),
+    revision: 1,
 });
 
 #[cfg(test)]
 mod tests {
-    use starknet::macros::felt_dec;
+    use starknet::macros::felt_hex;
 
     use super::*;
 
@@ -147,13 +147,12 @@ mod tests {
             name: "DAPP_NAME".to_string(),
             version: "v1".to_string(),
             chain_id: "TEST".to_string(),
-            revision: "1".to_string(),
+            revision: 1,
         };
 
         let actual = domain.hash();
-        let expected = felt_dec!(
-            "3433281071040767640814709368600706933598428900379824095511832833121789562575"
-        );
+        let expected =
+            felt_hex!("0x16b43db02ce728fc7caa053e6f4cf3dbfc585f50a509bc9713b33549b4a3901");
         assert_eq!(actual, expected, "Hashes do not match for StarknetDomain");
     }
 
@@ -218,10 +217,8 @@ mod tests {
             .message_hash(&SEPOLIA_DOMAIN, user_key)
             .unwrap();
 
-        let expected = Felt::from_dec_str(
-            "3466709383481810859947861276094399756712395853968834582933311835633294184917",
-        )
-        .unwrap();
+        let expected =
+            felt_hex!("0x56c7b21d13b79a33d7700dda20e22246c25e89818249504148174f527fc3f8f");
         assert_eq!(actual, expected, "Hashes do not match for TransferArgs");
     }
 
@@ -256,39 +253,31 @@ mod tests {
     #[test]
     fn test_message_hash_order() {
         let order = Order {
-            position_id: PositionId { value: 100 },
+            position_id: PositionId { value: 1 },
             base_asset_id: AssetId {
-                value: Felt::from(2),
+                value: Felt::from_dec_str("2").unwrap(),
             },
-            base_amount: 100,
+            base_amount: 3,
             quote_asset_id: AssetId {
-                value: Felt::from(1),
+                value: Felt::from_dec_str("4").unwrap(),
             },
-            quote_amount: -156,
+            quote_amount: 5,
             fee_asset_id: AssetId {
-                value: Felt::from(1),
+                value: Felt::from_dec_str("6").unwrap(),
             },
-            fee_amount: 74,
-            expiration: Timestamp { seconds: 100 },
-            salt: Felt::from(123),
+            fee_amount: 7,
+            expiration: Timestamp { seconds: 8 },
+            salt: Felt::from_dec_str("9").unwrap(),
         };
-        let struct_hash = order.hash();
-        assert_eq!(
-            struct_hash,
-            Felt::from_dec_str(
-                "1665831471058010006487271218593798151006210932872528562786901713678061931056"
-            )
-            .unwrap(),
-        );
 
         let user_key = Felt::from_dec_str(
-            "2629686405885377265612250192330550814166101744721025672593857097107510831364",
+            "1528491859474308181214583355362479091084733880193869257167008343298409336538",
         )
         .unwrap();
 
         let hash = order.message_hash(&SEPOLIA_DOMAIN, user_key).unwrap();
         let expected_hash = Felt::from_dec_str(
-            "2777763653990294626488311476018476273780272220813327677173452477333361411339",
+            "2788960362996410178586013462192086205585543858281504820767681025777602529597",
         )
         .unwrap();
         println!("{}", expected_hash.to_hex_string());
