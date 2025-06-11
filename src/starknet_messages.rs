@@ -15,13 +15,13 @@ pub trait Hashable {
 }
 
 pub trait OffChainMessage: Hashable {
-    fn message_hash(&self, stark_domain: &StarknetDomain, public_key: Felt) -> Option<Felt> {
+    fn message_hash(&self, stark_domain: &StarknetDomain, public_key: Felt) -> Result<Felt, String> {
         let mut hasher = PoseidonHasher::new();
         hasher.update(*MESSAGE_FELT);
         hasher.update(stark_domain.hash());
         hasher.update(public_key);
         hasher.update(self.hash());
-        Some(hasher.finalize())
+        Ok(hasher.finalize())
     }
 }
 
@@ -128,7 +128,7 @@ pub static SEPOLIA_DOMAIN: LazyLock<StarknetDomain> = LazyLock::new(|| StarknetD
 
 #[cfg(test)]
 mod tests {
-    use starknet::macros::felt_hex;
+    use starknet::macros::{felt, felt_hex};
 
     use super::*;
 
@@ -144,15 +144,15 @@ mod tests {
     #[test]
     fn test_starknet_domain_hashing() {
         let domain = StarknetDomain {
-            name: "DAPP_NAME".to_string(),
-            version: "v1".to_string(),
-            chain_id: "TEST".to_string(),
+            name: "Perpetuals".to_string(),
+            version: "v0".to_string(),
+            chain_id: "SN_SEPOLIA".to_string(),
             revision: 1,
         };
 
         let actual = domain.hash();
         let expected =
-            felt_hex!("0x16b43db02ce728fc7caa053e6f4cf3dbfc585f50a509bc9713b33549b4a3901");
+            felt!("2788850828067604540663615870177667078542240404906059806659101905868929188327");
         assert_eq!(actual, expected, "Hashes do not match for StarknetDomain");
     }
 
