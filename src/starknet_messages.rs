@@ -4,6 +4,7 @@ use starknet::macros::selector;
 use starknet_crypto::Felt;
 use starknet_crypto::PoseidonHasher;
 
+use core::hash;
 use std::sync::LazyLock;
 
 static MESSAGE_FELT: LazyLock<Felt> =
@@ -15,7 +16,11 @@ pub trait Hashable {
 }
 
 pub trait OffChainMessage: Hashable {
-    fn message_hash(&self, stark_domain: &StarknetDomain, public_key: Felt) -> Result<Felt, String> {
+    fn message_hash(
+        &self,
+        stark_domain: &StarknetDomain,
+        public_key: Felt,
+    ) -> Result<Felt, String> {
         let mut hasher = PoseidonHasher::new();
         hasher.update(*MESSAGE_FELT);
         hasher.update(stark_domain.hash());
@@ -125,6 +130,32 @@ pub static SEPOLIA_DOMAIN: LazyLock<StarknetDomain> = LazyLock::new(|| StarknetD
     chain_id: "SN_SEPOLIA".to_string(),
     revision: 1,
 });
+
+pub struct WithdrawalArgs {
+    pub recipient: Felt,
+    pub position_id: PositionId,
+    pub collateral_id: AssetId,
+    pub amount: u64,
+    pub expiration: Timestamp,
+    pub salt: Felt,
+}
+
+impl Hashable for WithdrawalArgs {
+    const SELECTOR: Felt = selector!( "\"WithdrawArgs\"(\"recipient\":\"ContractAddress\",\"position_id\":\"PositionId\",\"collateral_id\":\"AssetId\",\"amount\":\"u64\",\"expiration\":\"Timestamp\",\"salt\":\"felt\")\"PositionId\"(\"value\":\"u32\")\"AssetId\"(\"value\":\"felt\")\"Timestamp\"(\"seconds\":\"u64\")");
+    fn hash(&self) -> Felt {
+        let mut hasher = PoseidonHasher::new();
+        hasher.update(Self::SELECTOR);
+        hasher.update(self.recipient);
+        hasher.update(self.position_id.value.into());
+        hasher.update(self.collateral_id.value.into());
+        hasher.update(self.amount.into());
+        hasher.update(self.expiration.seconds.into());
+        hasher.update(self.salt);
+        hasher.finalize()
+    }
+}
+
+impl OffChainMessage for WithdrawalArgs {}
 
 #[cfg(test)]
 mod tests {
@@ -282,5 +313,35 @@ mod tests {
         .unwrap();
         println!("{}", expected_hash.to_hex_string());
         assert_eq!(hash, expected_hash);
+    }
+
+    #[test]
+    fn test_withdrawal_args_selector() {
+        let expected = Felt::from_hex_unchecked(
+            "0x250a5fa378e8b771654bd43dcb34844534f9d1e29e16b14760d7936ea7f4b1d",
+        );
+        let actual = WithdrawalArgs::SELECTOR;
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_withdrawal_args_hashing() {
+        let withdrawal_args = WithdrawalArgs {
+            recipient: Felt::from_hex("0x019ec96d4aea6fdc6f0b5f393fec3f186aefa8f0b8356f43d07b921ff48aa5da").unwrap(),
+            position_id: PositionId { value: 1 },
+            collateral_id: AssetId {
+                value: Felt::from_dec_str("4").unwrap(),
+            },
+            amount: 1000,
+            expiration: Timestamp { seconds: 5 },
+            salt: Felt::from_dec_str("123").unwrap(),
+        };
+
+        let actual = withdrawal_args.hash();
+        let expected = Felt::from_hex(
+            "0x04c22f625c59651e1219c60d03055f11f5dc23959929de35861548d86c0bc4ec",
+        )
+        .unwrap();
+        assert_eq!(actual, expected, "Hashes do not match for WithdrawalArgs");
     }
 }

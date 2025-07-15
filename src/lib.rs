@@ -1,7 +1,7 @@
 use hex;
 use num_bigint::BigUint;
 use sha2::{Digest, Sha256};
-use starknet::core::crypto::ecdsa_sign;
+use starknet::{core::crypto::ecdsa_sign, providers::sequencer::models::ContractAddresses};
 use starknet_crypto::Felt;
 use std::str::FromStr;
 
@@ -70,7 +70,7 @@ pub fn sign_message(message: &Felt, private_key: &Felt) -> Result<StarkSignature
         .map_err(|e| format!("Failed to sign message: {:?}", e));
 }
 
-// these functions are designed to be called from other languages, such as Python or JavaScript, 
+// these functions are designed to be called from other languages, such as Python or JavaScript,
 // so they take string arguments.
 pub fn get_order_hash(
     position_id: String,
@@ -196,6 +196,64 @@ fn get_transfer_hash(
         .map_err(|e| format!("Failed to compute message hash: {:?}", e))
 }
 
+fn get_withdrawal_hash(
+    recipient_hex: String,
+    position_id: String,
+    collateral_id_hex: String,
+    amount: String,
+    expiration: String,
+    salt: String,
+    user_public_key_hex: String,
+    domain_name: String,
+    domain_version: String,
+    domain_chain_id: String,
+    domain_revision: String,
+) -> Result<Felt, String> {
+    let collateral_id = Felt::from_hex(&collateral_id_hex)
+        .map_err(|e| format!("Invalid collateral_id_hex: {:?}", e))?;
+    let user_key = Felt::from_hex(&user_public_key_hex)
+        .map_err(|e| format!("Invalid user_public_key_hex: {:?}", e))?;
+
+    let recipient =
+        Felt::from_hex(&recipient_hex).map_err(|e| format!("Invalid recipient_hex: {:?}", e))?;
+    let position_id = u32::from_str_radix(&position_id, 10)
+        .map_err(|e| format!("Invalid position_id: {:?}", e))?;
+    let amount =
+        u64::from_str_radix(&amount, 10).map_err(|e| format!("Invalid amount: {:?}", e))?;
+    let expiration =
+        u64::from_str_radix(&expiration, 10).map_err(|e| format!("Invalid expiration: {:?}", e))?;
+    let salt = Felt::from_dec_str(&salt).map_err(|e| format!("Invalid salt: {:?}", e))?;
+    let revision = u32::from_str_radix(&domain_revision, 10)
+        .map_err(|e| format!("Invalid domain_revision: {:?}", e))?;
+
+    let withdrawal_args = starknet_messages::WithdrawalArgs {
+        recipient,
+        position_id: PositionId { value: position_id },
+        collateral_id: AssetId {
+            value: collateral_id,
+        },
+        amount,
+        expiration: Timestamp {
+            seconds: expiration,
+        },
+        salt,
+    };
+    let domain = StarknetDomain {
+        name: domain_name,
+        version: domain_version,
+        chain_id: domain_chain_id,
+        revision,
+    };
+    withdrawal_args
+        .message_hash(&domain, user_key)
+        .map_err(|e| {
+            format!(
+                "Failed to compute message hash for withdrawal args: {:?}",
+                e
+            )
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,6 +359,57 @@ mod tests {
                     hash,
                     Felt::from_hex(
                         "0x4de4c009e0d0c5a70a7da0e2039fb2b99f376d53496f89d9f437e736add6b48"
+                    )
+                    .unwrap()
+                );
+            }
+            Err(err) => {
+                panic!("Expected Ok, got Err: {}", err);
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_withdrawal_hash() {
+        let recipient_hex = Felt::from_dec_str(
+            "206642948138484946401984817000601902748248360221625950604253680558965863254",
+        )
+        .unwrap()
+        .to_hex_string();
+        let position_id = "2".to_string();
+        let collateral_id_hex = Felt::from_dec_str(
+            "1386727789535574059419576650469753513512158569780862144831829362722992755422",
+        )
+        .unwrap()
+        .to_hex_string();
+        let amount = "1000".to_string();
+        let expiration = "0".to_string();
+        let salt = "0".to_string();
+        let user_public_key_hex =
+            "0x5D05989E9302DCEBC74E241001E3E3AC3F4402CCF2F8E6F74B034B07AD6A904".to_string();
+        let domain_name = "Perpetuals".to_string();
+        let domain_version = "v0".to_string();
+        let domain_chain_id = "SN_SEPOLIA".to_string();
+        let domain_revision = "1".to_string();
+        let result = get_withdrawal_hash(
+            recipient_hex,
+            position_id,
+            collateral_id_hex,
+            amount,
+            expiration,
+            salt,
+            user_public_key_hex,
+            domain_name,
+            domain_version,
+            domain_chain_id,
+            domain_revision,
+        );
+        match result {
+            Ok(hash) => {
+                assert_eq!(
+                    hash,
+                    Felt::from_dec_str(
+                        "2182119571682827544073774098906745929330860211691330979324731407862023927178"
                     )
                     .unwrap()
                 );
