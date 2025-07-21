@@ -143,7 +143,7 @@ pub fn get_order_hash(
         .map_err(|e| format!("Failed to compute message hash: {:?}", e))
 }
 
-fn get_transfer_hash(
+pub fn get_transfer_hash(
     recipient_position_id: String,
     sender_position_id: String,
     collateral_id_hex: String,
@@ -196,7 +196,7 @@ fn get_transfer_hash(
         .map_err(|e| format!("Failed to compute message hash: {:?}", e))
 }
 
-fn get_withdrawal_hash(
+pub fn get_withdrawal_hash(
     recipient_hex: String,
     position_id: String,
     collateral_id_hex: String,
