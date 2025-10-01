@@ -4,11 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-starknet = { git = "https://github.com/xJonathanLEI/starknet-rs" }
-starknet-crypto = "0.7.4"
-
-serde_json = "1.0.137"
-lazy_static = "1.5.0"
-num-bigint = "0.4.6"
 hex = "0.4.3"
+num-bigint = "0.4.6"
 sha2 = "0.10.8"
+starknet = { git = "https://github.com/xJonathanLEI/starknet-rs", tag = "starknet/v0.17.0" }
+starknet-crypto = "0.8.1"  # `starknet` crate doesn't re-export `PoseidonHasher`
