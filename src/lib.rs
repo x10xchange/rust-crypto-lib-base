@@ -1,7 +1,7 @@
 use hex;
 use num_bigint::BigUint;
 use sha2::{Digest, Sha256};
-use starknet::{core::crypto::ecdsa_sign, providers::sequencer::models::ContractAddresses};
+use starknet::core::crypto::ecdsa_sign;
 use starknet_crypto::Felt;
 use std::str::FromStr;
 

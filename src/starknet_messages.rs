@@ -4,7 +4,6 @@ use starknet::macros::selector;
 use starknet_crypto::Felt;
 use starknet_crypto::PoseidonHasher;
 
-use core::hash;
 use std::sync::LazyLock;
 
 static MESSAGE_FELT: LazyLock<Felt> =
@@ -327,7 +326,10 @@ mod tests {
     #[test]
     fn test_withdrawal_args_hashing() {
         let withdrawal_args = WithdrawalArgs {
-            recipient: Felt::from_hex("0x019ec96d4aea6fdc6f0b5f393fec3f186aefa8f0b8356f43d07b921ff48aa5da").unwrap(),
+            recipient: Felt::from_hex(
+                "0x019ec96d4aea6fdc6f0b5f393fec3f186aefa8f0b8356f43d07b921ff48aa5da",
+            )
+            .unwrap(),
             position_id: PositionId { value: 1 },
             collateral_id: AssetId {
                 value: Felt::from_dec_str("4").unwrap(),
@@ -338,10 +340,9 @@ mod tests {
         };
 
         let actual = withdrawal_args.hash();
-        let expected = Felt::from_hex(
-            "0x04c22f625c59651e1219c60d03055f11f5dc23959929de35861548d86c0bc4ec",
-        )
-        .unwrap();
+        let expected =
+            Felt::from_hex("0x04c22f625c59651e1219c60d03055f11f5dc23959929de35861548d86c0bc4ec")
+                .unwrap();
         assert_eq!(actual, expected, "Hashes do not match for WithdrawalArgs");
     }
 }
