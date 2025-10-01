@@ -2,7 +2,7 @@ use hex;
 use num_bigint::BigUint;
 use sha2::{Digest, Sha256};
 use starknet::core::crypto::ecdsa_sign;
-use starknet_crypto::Felt;
+use starknet::core::types::Felt;
 use std::str::FromStr;
 
 use crate::starknet_messages::{

@@ -1,7 +1,7 @@
 use starknet::core::utils::cairo_short_string_to_felt;
 
+use starknet::core::types::Felt;
 use starknet::macros::selector;
-use starknet_crypto::Felt;
 use starknet_crypto::PoseidonHasher;
 
 use std::sync::LazyLock;
