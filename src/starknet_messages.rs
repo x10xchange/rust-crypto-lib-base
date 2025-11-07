@@ -78,6 +78,51 @@ pub struct Order {
     pub salt: Felt,
 }
 
+pub struct LimitOrder {
+    pub source_position: PositionId,
+    pub receive_position: PositionId,
+    // The asset to be bought or sold.
+    pub base_asset_id: AssetId,
+    // The amount of the asset to be bought or sold.
+    pub base_amount: i64,
+    // The collateral asset.
+    pub quote_asset_id: AssetId,
+    // The amount of the collateral asset to be paid or received.
+    pub quote_amount: i64,
+    // The collateral asset.
+    pub fee_asset_id: AssetId,
+    // The amount of the collateral asset to be paid.
+    pub fee_amount: u64,
+    // The expiration time of the order.
+    pub expiration: Timestamp,
+    // A random value to make each order unique.
+    pub salt: Felt,
+}
+
+impl Hashable for LimitOrder {
+    const SELECTOR: Felt = selector!(
+            "\"LimitOrder\"(\"source_position\":\"PositionId\",\"receive_position\":\"PositionId\",\"base_asset_id\":\"AssetId\",\"base_amount\":\"i64\",\"quote_asset_id\":\"AssetId\",\"quote_amount\":\"i64\",\"fee_asset_id\":\"AssetId\",\"fee_amount\":\"u64\",\"expiration\":\"Timestamp\",\"salt\":\"felt\")\"PositionId\"(\"value\":\"u32\")\"AssetId\"(\"value\":\"felt\")\"Timestamp\"(\"seconds\":\"u64\")"
+        );
+
+    fn hash(&self) -> Felt {
+        let mut hasher = PoseidonHasher::new();
+        hasher.update(Self::SELECTOR);
+        hasher.update(self.source_position.value.into());
+        hasher.update(self.receive_position.value.into());
+        hasher.update(self.base_asset_id.value.into());
+        hasher.update(self.base_amount.into());
+        hasher.update(self.quote_asset_id.value.into());
+        hasher.update(self.quote_amount.into());
+        hasher.update(self.fee_asset_id.value.into());
+        hasher.update(self.fee_amount.into());
+        hasher.update(self.expiration.seconds.into());
+        hasher.update(self.salt);
+        hasher.finalize()
+    }
+}
+
+impl OffChainMessage for LimitOrder {}
+
 impl Hashable for Order {
     const SELECTOR: Felt = selector!("\"Order\"(\"position_id\":\"felt\",\"base_asset_id\":\"AssetId\",\"base_amount\":\"i64\",\"quote_asset_id\":\"AssetId\",\"quote_amount\":\"i64\",\"fee_asset_id\":\"AssetId\",\"fee_amount\":\"u64\",\"expiration\":\"Timestamp\",\"salt\":\"felt\")\"PositionId\"(\"value\":\"u32\")\"AssetId\"(\"value\":\"felt\")\"Timestamp\"(\"seconds\":\"u64\")");
     fn hash(&self) -> Felt {
@@ -344,5 +389,34 @@ mod tests {
             Felt::from_hex("0x04c22f625c59651e1219c60d03055f11f5dc23959929de35861548d86c0bc4ec")
                 .unwrap();
         assert_eq!(actual, expected, "Hashes do not match for WithdrawalArgs");
+    }
+
+    #[test]
+    fn test_limit_order_hashing() {
+        let limit_order = LimitOrder {
+            source_position: PositionId { value: 1 },
+            receive_position: PositionId { value: 2 },
+            base_asset_id: AssetId {
+                value: Felt::from_dec_str("2").unwrap(),
+            },
+            base_amount: 3,
+            quote_asset_id: AssetId {
+                value: Felt::from_dec_str("4").unwrap(),
+            },
+            quote_amount: 5,
+            fee_asset_id: AssetId {
+                value: Felt::from_dec_str("6").unwrap(),
+            },
+            fee_amount: 7,
+            expiration: Timestamp { seconds: 8 },
+            salt: Felt::from_dec_str("9").unwrap(),
+        };
+
+        let actual = limit_order.hash();
+        let expected = Felt::from_hex(
+            "0x6344a601c7665a748259e9535e66cc753eb88ad28f9bb1419906e8bf2c1edf2",
+        )
+        .unwrap();
+        assert_eq!(actual, expected, "Hashes do not match for LimitOrder");
     }
 }
