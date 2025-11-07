@@ -6,7 +6,8 @@ use starknet::core::types::Felt;
 use std::str::FromStr;
 
 use crate::starknet_messages::{
-    AssetId, OffChainMessage, Order, PositionId, StarknetDomain, Timestamp, TransferArgs,
+    AssetId, LimitOrder, OffChainMessage, Order, PositionId, StarknetDomain, Timestamp,
+    TransferArgs,
 };
 pub mod starknet_messages;
 
@@ -139,6 +140,86 @@ pub fn get_order_hash(
         revision,
     };
     order
+        .message_hash(&domain, user_key)
+        .map_err(|e| format!("Failed to compute message hash: {:?}", e))
+}
+
+pub fn get_limit_order_hash(
+    source_position_id: String,
+    receive_position_id: String,
+    base_asset_id_hex: String,
+    base_amount: String,
+    quote_asset_id_hex: String,
+    quote_amount: String,
+    fee_asset_id_hex: String,
+    fee_amount: String,
+    expiration: String,
+    salt: String,
+    user_public_key_hex: String,
+    domain_name: String,
+    domain_version: String,
+    domain_chain_id: String,
+    domain_revision: String,
+) -> Result<Felt, String> {
+    let base_asset_id = Felt::from_hex(&base_asset_id_hex)
+        .map_err(|e| format!("Invalid base_asset_id_hex: {:?}", e))?;
+    let quote_asset_id = Felt::from_hex(&quote_asset_id_hex)
+        .map_err(|e| format!("Invalid quote_asset_id_hex: {:?}", e))?;
+    let fee_asset_id = Felt::from_hex(&fee_asset_id_hex)
+        .map_err(|e| format!("Invalid fee_asset_id_hex: {:?}", e))?;
+    let user_key = Felt::from_hex(&user_public_key_hex)
+        .map_err(|e| format!("Invalid user_public_key_hex: {:?}", e))?;
+
+    let source_position_id = u32::from_str_radix(&source_position_id, 10)
+        .map_err(|e| format!("Invalid source_position_id: {:?}", e))?;
+    let receive_position_id = u32::from_str_radix(&receive_position_id, 10)
+        .map_err(|e| format!("Invalid receive_position_id: {:?}", e))?;
+    let base_amount = i64::from_str_radix(&base_amount, 10)
+        .map_err(|e| format!("Invalid base_amount: {:?}", e))?;
+    let quote_amount = i64::from_str_radix(&quote_amount, 10)
+        .map_err(|e| format!("Invalid quote_amount: {:?}", e))?;
+    let fee_amount =
+        u64::from_str_radix(&fee_amount, 10).map_err(|e| format!("Invalid fee_amount: {:?}", e))?;
+    let expiration =
+        u64::from_str_radix(&expiration, 10).map_err(|e| format!("Invalid expiration: {:?}", e))?;
+    let salt = u64::from_str_radix(&salt, 10).map_err(|e| format!("Invalid salt: {:?}", e))?;
+    let revision = u32::from_str_radix(&domain_revision, 10)
+        .map_err(|e| format!("Invalid domain_revision: {:?}", e))?;
+
+    let limit_order = LimitOrder {
+        source_position: PositionId {
+            value: source_position_id,
+        },
+        receive_position: PositionId {
+            value: receive_position_id,
+        },
+        base_asset_id: AssetId {
+            value: base_asset_id,
+        },
+        base_amount,
+        quote_asset_id: AssetId {
+            value: quote_asset_id,
+        },
+        quote_amount,
+        fee_asset_id: AssetId {
+            value: fee_asset_id,
+        },
+        fee_amount,
+        expiration: Timestamp {
+            seconds: expiration,
+        },
+        salt: salt
+            .try_into()
+            .map_err(|e| format!("Invalid salt vault: {:?}", e))?,
+    };
+    let domain = StarknetDomain {
+        name: domain_name,
+        version: domain_version,
+        chain_id: domain_chain_id,
+        revision,
+    };
+
+    limit_order
         .message_hash(&domain, user_key)
         .map_err(|e| format!("Failed to compute message hash: {:?}", e))
 }
