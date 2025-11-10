@@ -451,6 +451,59 @@ mod tests {
     }
 
     #[test]
+    fn test_get_limit_order_hash() {
+        let source_position_id = "100".to_string();
+        let receive_position_id = "200".to_string();
+        let base_asset_id_hex = "0x2".to_string();
+        let base_amount = "100".to_string();
+        let quote_asset_id_hex = "0x1".to_string();
+        let quote_amount = "-156".to_string();
+        let fee_asset_id_hex = "0x1".to_string();
+        let fee_amount = "74".to_string();
+        let expiration = "100".to_string();
+        let salt = "123".to_string();
+        let user_public_key_hex =
+            "0x5d05989e9302dcebc74e241001e3e3ac3f4402ccf2f8e6f74b034b07ad6a904".to_string();
+        let domain_name = "Perpetuals".to_string();
+        let domain_version = "v0".to_string();
+        let domain_chain_id = "SN_SEPOLIA".to_string();
+        let domain_revision = "1".to_string();
+
+        let result = get_limit_order_hash(
+            source_position_id,
+            receive_position_id,
+            base_asset_id_hex,
+            base_amount,
+            quote_asset_id_hex,
+            quote_amount,
+            fee_asset_id_hex,
+            fee_amount,
+            expiration,
+            salt,
+            user_public_key_hex,
+            domain_name,
+            domain_version,
+            domain_chain_id,
+            domain_revision,
+        );
+
+        match result {
+            Ok(hash) => {
+                assert_eq!(
+                    hash,
+                    Felt::from_hex(
+                        "0xa3740f996ec1fbbe00ba85be37b00fc4f5c3ae3958bcc3081fb731eb7a3c59"
+                    )
+                    .unwrap()
+                );
+            }
+            Err(err) => {
+                panic!("Expected Ok, got Err: {}", err);
+            }
+        }
+    }
+
+    #[test]
     fn test_get_withdrawal_hash() {
         let recipient_hex = Felt::from_dec_str(
             "206642948138484946401984817000601902748248360221625950604253680558965863254",

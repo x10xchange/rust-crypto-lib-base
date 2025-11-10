@@ -413,10 +413,9 @@ mod tests {
         };
 
         let actual = limit_order.hash();
-        let expected = Felt::from_hex(
-            "0x6344a601c7665a748259e9535e66cc753eb88ad28f9bb1419906e8bf2c1edf2",
-        )
-        .unwrap();
+        let expected =
+            Felt::from_hex("0x6344a601c7665a748259e9535e66cc753eb88ad28f9bb1419906e8bf2c1edf2")
+                .unwrap();
         assert_eq!(actual, expected, "Hashes do not match for LimitOrder");
     }
 }
