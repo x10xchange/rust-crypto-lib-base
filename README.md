@@ -21,6 +21,7 @@ This is the main entry point of the library. It provides:
   - `get_order_hash`: Computes the hash for an order message, given all order parameters as strings.
   - `get_transfer_hash`: Computes the hash for a transfer message, given all transfer parameters as strings.
   - `get_withdrawal_hash`: Computes the hash for a withdrawal message, given all withdrawal parameters as strings.
+  - `get_withdraw_and_stake_hash`: Computes the hash for a withdraw-and-stake message, given all its parameters as strings. `vault` and `beneficiary` are EVM addresses and must fit in 160 bits.
 
 - **Types**
 
@@ -44,7 +45,7 @@ This module defines the core data structures and hashing logic for StarkNet off-
 
   - `StarknetDomain`: Represents the domain for message separation (name, version, chain_id, revision).
   - `AssetId`, `PositionId`, `AssetAmount`, `Timestamp`: Basic types for message construction.
-  - `Order`, `TransferArgs`, `WithdrawalArgs`: Main message types for orders, transfers, and withdrawals.
+  - `Order`, `TransferArgs`, `WithdrawalArgs`, `WithdrawAndStakeArgs`: Main message types for orders, transfers, withdrawals, and withdraw-and-stake.
 
 - **Hash Implementations**
 
