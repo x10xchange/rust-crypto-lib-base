@@ -7,7 +7,7 @@ use std::str::FromStr;
 
 use crate::starknet_messages::{
     AssetId, LimitOrder, OffChainMessage, Order, PositionId, StarknetDomain, Timestamp,
-    TransferArgs,
+    TransferArgs, WithdrawAndStakeArgs,
 };
 pub mod starknet_messages;
 
@@ -335,6 +335,76 @@ pub fn get_withdrawal_hash(
         })
 }
 
+/// Parses a hex EVM address into a felt, rejecting values that don't fit in 160 bits (Cairo's
+/// `EthAddress` would refuse them on deserialization).
+fn parse_eth_address(name: &str, hex: &str) -> Result<Felt, String> {
+    let address = Felt::from_hex(hex).map_err(|e| format!("Invalid {}: {:?}", name, e))?;
+    if address.bits() > 160 {
+        return Err(format!("Invalid {}: not a 160-bit EVM address", name));
+    }
+    Ok(address)
+}
+
+pub fn get_withdraw_and_stake_hash(
+    position_id: String,
+    collateral_id_hex: String,
+    amount: String,
+    vault_hex: String,
+    beneficiary_hex: String,
+    expiration: String,
+    salt: String,
+    user_public_key_hex: String,
+    domain_name: String,
+    domain_version: String,
+    domain_chain_id: String,
+    domain_revision: String,
+) -> Result<Felt, String> {
+    let collateral_id = Felt::from_hex(&collateral_id_hex)
+        .map_err(|e| format!("Invalid collateral_id_hex: {:?}", e))?;
+    let user_key = Felt::from_hex(&user_public_key_hex)
+        .map_err(|e| format!("Invalid user_public_key_hex: {:?}", e))?;
+    let vault = parse_eth_address("vault_hex", &vault_hex)?;
+    let beneficiary = parse_eth_address("beneficiary_hex", &beneficiary_hex)?;
+
+    let position_id = u32::from_str_radix(&position_id, 10)
+        .map_err(|e| format!("Invalid position_id: {:?}", e))?;
+    let amount =
+        u64::from_str_radix(&amount, 10).map_err(|e| format!("Invalid amount: {:?}", e))?;
+    let expiration =
+        u64::from_str_radix(&expiration, 10).map_err(|e| format!("Invalid expiration: {:?}", e))?;
+    let salt = Felt::from_dec_str(&salt).map_err(|e| format!("Invalid salt: {:?}", e))?;
+    let revision = u32::from_str_radix(&domain_revision, 10)
+        .map_err(|e| format!("Invalid domain_revision: {:?}", e))?;
+
+    let withdraw_and_stake_args = WithdrawAndStakeArgs {
+        position_id: PositionId { value: position_id },
+        collateral_id: AssetId {
+            value: collateral_id,
+        },
+        amount,
+        vault,
+        beneficiary,
+        expiration: Timestamp {
+            seconds: expiration,
+        },
+        salt,
+    };
+    let domain = StarknetDomain {
+        name: domain_name,
+        version: domain_version,
+        chain_id: domain_chain_id,
+        revision,
+    };
+    withdraw_and_stake_args
+        .message_hash(&domain, user_key)
+        .map_err(|e| {
+            format!(
+                "Failed to compute message hash for withdraw and stake args: {:?}",
+                e
+            )
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,5 +622,37 @@ mod tests {
                 panic!("Expected Ok, got Err: {}", err);
             }
         }
+    }
+
+    fn withdraw_and_stake_hash(vault_hex: &str) -> Result<Felt, String> {
+        get_withdraw_and_stake_hash(
+            "1".to_string(),
+            "0x2".to_string(),
+            "3".to_string(),
+            vault_hex.to_string(),
+            "0x70997970c51812dc3a010c7d01b50e0d17dc79c8".to_string(),
+            "6".to_string(),
+            "7".to_string(),
+            "0x00341db4194da6cdeff282feebca99387e754f7ab81b676262e64e194f342a87".to_string(),
+            "Perpetuals".to_string(),
+            "v0".to_string(),
+            "SN_MAIN".to_string(),
+            "1".to_string(),
+        )
+    }
+
+    #[test]
+    fn test_get_withdraw_and_stake_hash() {
+        assert_eq!(
+            withdraw_and_stake_hash("0x5fbdb2315678afecb367f032d93f642f64180aa3").unwrap(),
+            Felt::from_hex("0x0520cb61ba9d79eb785abd3085b97a10fab05b4ee9b40133543cce1f9f7ac662")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_get_withdraw_and_stake_hash_rejects_non_evm_address() {
+        let too_wide = format!("0x1{}", "0".repeat(40)); // 2^160
+        assert!(withdraw_and_stake_hash(&too_wide).is_err());
     }
 }

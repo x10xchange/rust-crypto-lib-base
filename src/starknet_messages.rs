@@ -201,6 +201,37 @@ impl Hashable for WithdrawalArgs {
 
 impl OffChainMessage for WithdrawalArgs {}
 
+/// Withdraws `amount` of `collateral_id` from `position_id` and stakes it: on settlement the funds go
+/// from the treasury into the staking contract's deposit for `vault`, credited to `beneficiary`.
+/// `vault` and `beneficiary` are EVM addresses (Cairo `EthAddress`), hashed as plain felts.
+pub struct WithdrawAndStakeArgs {
+    pub position_id: PositionId,
+    pub collateral_id: AssetId,
+    pub amount: u64,
+    pub vault: Felt,
+    pub beneficiary: Felt,
+    pub expiration: Timestamp,
+    pub salt: Felt,
+}
+
+impl Hashable for WithdrawAndStakeArgs {
+    const SELECTOR: Felt = selector!("\"WithdrawAndStakeArgs\"(\"position_id\":\"PositionId\",\"collateral_id\":\"AssetId\",\"amount\":\"u64\",\"vault\":\"felt\",\"beneficiary\":\"felt\",\"expiration\":\"Timestamp\",\"salt\":\"felt\")\"PositionId\"(\"value\":\"u32\")\"AssetId\"(\"value\":\"felt\")\"Timestamp\"(\"seconds\":\"u64\")");
+    fn hash(&self) -> Felt {
+        let mut hasher = PoseidonHasher::new();
+        hasher.update(Self::SELECTOR);
+        hasher.update(self.position_id.value.into());
+        hasher.update(self.collateral_id.value);
+        hasher.update(self.amount.into());
+        hasher.update(self.vault);
+        hasher.update(self.beneficiary);
+        hasher.update(self.expiration.seconds.into());
+        hasher.update(self.salt);
+        hasher.finalize()
+    }
+}
+
+impl OffChainMessage for WithdrawAndStakeArgs {}
+
 #[cfg(test)]
 mod tests {
     use starknet::macros::{felt, felt_hex};
@@ -389,6 +420,55 @@ mod tests {
             Felt::from_hex("0x04c22f625c59651e1219c60d03055f11f5dc23959929de35861548d86c0bc4ec")
                 .unwrap();
         assert_eq!(actual, expected, "Hashes do not match for WithdrawalArgs");
+    }
+
+    // signed_messages.cairo in starknet-perpetual-private, perp-core's stark.rs and starkex-client's
+    // WithdrawAndStakeTest pin the same values.
+    fn withdraw_and_stake_args() -> WithdrawAndStakeArgs {
+        WithdrawAndStakeArgs {
+            position_id: PositionId { value: 1 },
+            collateral_id: AssetId { value: felt!("2") },
+            amount: 3,
+            vault: felt_hex!("0x5fbdb2315678afecb367f032d93f642f64180aa3"),
+            beneficiary: felt_hex!("0x70997970c51812dc3a010c7d01b50e0d17dc79c8"),
+            expiration: Timestamp { seconds: 6 },
+            salt: felt!("7"),
+        }
+    }
+
+    #[test]
+    fn test_withdraw_and_stake_args_selector() {
+        assert_eq!(
+            WithdrawAndStakeArgs::SELECTOR,
+            felt_hex!("0x03f99f4a1ab5f657067715dfdcdfd4171a292aec213defa756e29cc263c0e5c2")
+        );
+    }
+
+    #[test]
+    fn test_withdraw_and_stake_args_hashing() {
+        assert_eq!(
+            withdraw_and_stake_args().hash(),
+            felt_hex!("0x07b51e9ac5bb23717cf3ac3f11ea26648630f2429afdbfab81c39ec6e6bcd2e5")
+        );
+    }
+
+    #[test]
+    fn test_message_hash_withdraw_and_stake_on_mainnet() {
+        let mainnet = StarknetDomain {
+            name: "Perpetuals".to_string(),
+            version: "v0".to_string(),
+            chain_id: "SN_MAIN".to_string(),
+            revision: 1,
+        };
+        let user_key =
+            felt_hex!("0x00341db4194da6cdeff282feebca99387e754f7ab81b676262e64e194f342a87");
+
+        assert_eq!(
+            withdraw_and_stake_args()
+                .message_hash(&mainnet, user_key)
+                .unwrap(),
+            felt_hex!("0x0520cb61ba9d79eb785abd3085b97a10fab05b4ee9b40133543cce1f9f7ac662")
+        );
     }
 
     #[test]
