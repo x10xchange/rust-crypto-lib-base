@@ -5,10 +5,12 @@ use starknet::core::crypto::ecdsa_sign;
 use starknet::core::types::Felt;
 use std::str::FromStr;
 
+use crate::eip712::{Eip712Domain, EthAddress};
 use crate::starknet_messages::{
     AssetId, LimitOrder, OffChainMessage, Order, PositionId, StarknetDomain, Timestamp,
     TransferArgs, WithdrawAndStakeArgs,
 };
+pub mod eip712;
 pub mod starknet_messages;
 
 pub struct StarkSignature {
@@ -345,6 +347,43 @@ fn parse_eth_address(name: &str, hex: &str) -> Result<Felt, String> {
     Ok(address)
 }
 
+/// The `WithdrawAndStakeArgs` both signers sign: the position owner (SNIP-12) and the beneficiary
+/// (EIP-712) take the same inputs.
+fn parse_withdraw_and_stake_args(
+    position_id: &str,
+    collateral_id_hex: &str,
+    amount: &str,
+    vault_hex: &str,
+    beneficiary_hex: &str,
+    expiration: &str,
+    salt: &str,
+) -> Result<WithdrawAndStakeArgs, String> {
+    let collateral_id = Felt::from_hex(collateral_id_hex)
+        .map_err(|e| format!("Invalid collateral_id_hex: {:?}", e))?;
+    let vault = parse_eth_address("vault_hex", vault_hex)?;
+    let beneficiary = parse_eth_address("beneficiary_hex", beneficiary_hex)?;
+    let position_id = u32::from_str_radix(position_id, 10)
+        .map_err(|e| format!("Invalid position_id: {:?}", e))?;
+    let amount = u64::from_str_radix(amount, 10).map_err(|e| format!("Invalid amount: {:?}", e))?;
+    let expiration =
+        u64::from_str_radix(expiration, 10).map_err(|e| format!("Invalid expiration: {:?}", e))?;
+    let salt = Felt::from_dec_str(salt).map_err(|e| format!("Invalid salt: {:?}", e))?;
+
+    Ok(WithdrawAndStakeArgs {
+        position_id: PositionId { value: position_id },
+        collateral_id: AssetId {
+            value: collateral_id,
+        },
+        amount,
+        vault,
+        beneficiary,
+        expiration: Timestamp {
+            seconds: expiration,
+        },
+        salt,
+    })
+}
+
 pub fn get_withdraw_and_stake_hash(
     position_id: String,
     collateral_id_hex: String,
@@ -359,36 +398,19 @@ pub fn get_withdraw_and_stake_hash(
     domain_chain_id: String,
     domain_revision: String,
 ) -> Result<Felt, String> {
-    let collateral_id = Felt::from_hex(&collateral_id_hex)
-        .map_err(|e| format!("Invalid collateral_id_hex: {:?}", e))?;
+    let withdraw_and_stake_args = parse_withdraw_and_stake_args(
+        &position_id,
+        &collateral_id_hex,
+        &amount,
+        &vault_hex,
+        &beneficiary_hex,
+        &expiration,
+        &salt,
+    )?;
     let user_key = Felt::from_hex(&user_public_key_hex)
         .map_err(|e| format!("Invalid user_public_key_hex: {:?}", e))?;
-    let vault = parse_eth_address("vault_hex", &vault_hex)?;
-    let beneficiary = parse_eth_address("beneficiary_hex", &beneficiary_hex)?;
-
-    let position_id = u32::from_str_radix(&position_id, 10)
-        .map_err(|e| format!("Invalid position_id: {:?}", e))?;
-    let amount =
-        u64::from_str_radix(&amount, 10).map_err(|e| format!("Invalid amount: {:?}", e))?;
-    let expiration =
-        u64::from_str_radix(&expiration, 10).map_err(|e| format!("Invalid expiration: {:?}", e))?;
-    let salt = Felt::from_dec_str(&salt).map_err(|e| format!("Invalid salt: {:?}", e))?;
     let revision = u32::from_str_radix(&domain_revision, 10)
         .map_err(|e| format!("Invalid domain_revision: {:?}", e))?;
-
-    let withdraw_and_stake_args = WithdrawAndStakeArgs {
-        position_id: PositionId { value: position_id },
-        collateral_id: AssetId {
-            value: collateral_id,
-        },
-        amount,
-        vault,
-        beneficiary,
-        expiration: Timestamp {
-            seconds: expiration,
-        },
-        salt,
-    };
     let domain = StarknetDomain {
         name: domain_name,
         version: domain_version,
@@ -403,6 +425,72 @@ pub fn get_withdraw_and_stake_hash(
                 e
             )
         })
+}
+
+/// The EVM chain id (decimal) and settlement contract (hex) the engine signs EIP-712 messages under.
+fn parse_eip712_domain(
+    evm_chain_id: &str,
+    verifying_contract_hex: &str,
+) -> Result<Eip712Domain, String> {
+    let chain_id = u64::from_str_radix(evm_chain_id, 10)
+        .map_err(|e| format!("Invalid evm_chain_id: {:?}", e))?;
+    let verifying_contract = EthAddress::from_felt(&parse_eth_address(
+        "verifying_contract_hex",
+        verifying_contract_hex,
+    )?)?;
+    Eip712Domain::new(chain_id, verifying_contract)
+}
+
+/// The `eth_signTypedData_v4` JSON document to ask the beneficiary's EVM wallet to sign. Takes the
+/// same withdraw-and-stake inputs as [`get_withdraw_and_stake_hash`], plus the EIP-712 domain.
+pub fn get_withdraw_and_stake_eip712_typed_data(
+    position_id: String,
+    collateral_id_hex: String,
+    amount: String,
+    vault_hex: String,
+    beneficiary_hex: String,
+    expiration: String,
+    salt: String,
+    evm_chain_id: String,
+    verifying_contract_hex: String,
+) -> Result<String, String> {
+    let args = parse_withdraw_and_stake_args(
+        &position_id,
+        &collateral_id_hex,
+        &amount,
+        &vault_hex,
+        &beneficiary_hex,
+        &expiration,
+        &salt,
+    )?;
+    let domain = parse_eip712_domain(&evm_chain_id, &verifying_contract_hex)?;
+    Ok(args.eip712_typed_data(&domain)?.to_string())
+}
+
+/// The 32-byte EIP-712 digest (`0x`-prefixed hex) the beneficiary's wallet signs for the document
+/// [`get_withdraw_and_stake_eip712_typed_data`] returns.
+pub fn get_withdraw_and_stake_eip712_hash(
+    position_id: String,
+    collateral_id_hex: String,
+    amount: String,
+    vault_hex: String,
+    beneficiary_hex: String,
+    expiration: String,
+    salt: String,
+    evm_chain_id: String,
+    verifying_contract_hex: String,
+) -> Result<String, String> {
+    let args = parse_withdraw_and_stake_args(
+        &position_id,
+        &collateral_id_hex,
+        &amount,
+        &vault_hex,
+        &beneficiary_hex,
+        &expiration,
+        &salt,
+    )?;
+    let domain = parse_eip712_domain(&evm_chain_id, &verifying_contract_hex)?;
+    Ok(format!("0x{}", hex::encode(args.eip712_hash(&domain)?)))
 }
 
 #[cfg(test)]
@@ -654,5 +742,72 @@ mod tests {
     fn test_get_withdraw_and_stake_hash_rejects_non_evm_address() {
         let too_wide = format!("0x1{}", "0".repeat(40)); // 2^160
         assert!(withdraw_and_stake_hash(&too_wide).is_err());
+    }
+
+    fn withdraw_and_stake_eip712(
+        f: fn(
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+        ) -> Result<String, String>,
+        evm_chain_id: &str,
+    ) -> Result<String, String> {
+        f(
+            "1".to_string(),
+            "0x2".to_string(),
+            "3".to_string(),
+            "0x5fbdb2315678afecb367f032d93f642f64180aa3".to_string(),
+            "0x70997970c51812dc3a010c7d01b50e0d17dc79c8".to_string(),
+            "6".to_string(),
+            "7".to_string(),
+            evm_chain_id.to_string(),
+            "0x1111111111111111111111111111111111111111".to_string(),
+        )
+    }
+
+    /// The `cast` digest pinned by starkex-client's `WithdrawAndStakeTest` and zkp's perp-core.
+    #[test]
+    fn test_get_withdraw_and_stake_eip712_hash() {
+        assert_eq!(
+            withdraw_and_stake_eip712(get_withdraw_and_stake_eip712_hash, "31337").unwrap(),
+            "0x8a90600e06caea19adf9b0c3217116d00026fea0b525e368fc1533243e83c658"
+        );
+    }
+
+    #[test]
+    fn test_get_withdraw_and_stake_eip712_typed_data() {
+        let typed_data: serde_json::Value = serde_json::from_str(
+            &withdraw_and_stake_eip712(get_withdraw_and_stake_eip712_typed_data, "31337").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(typed_data["primaryType"], "WithdrawAndStake");
+        assert_eq!(typed_data["domain"]["chainId"], 31337);
+        assert_eq!(
+            typed_data["message"]["beneficiary"],
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+        );
+    }
+
+    #[test]
+    fn test_get_withdraw_and_stake_eip712_rejects_an_unset_domain() {
+        assert!(withdraw_and_stake_eip712(get_withdraw_and_stake_eip712_hash, "0").is_err());
+        assert!(get_withdraw_and_stake_eip712_typed_data(
+            "1".to_string(),
+            "0x2".to_string(),
+            "3".to_string(),
+            "0x5fbdb2315678afecb367f032d93f642f64180aa3".to_string(),
+            "0x70997970c51812dc3a010c7d01b50e0d17dc79c8".to_string(),
+            "6".to_string(),
+            "7".to_string(),
+            "31337".to_string(),
+            "0x0".to_string(),
+        )
+        .is_err());
     }
 }
