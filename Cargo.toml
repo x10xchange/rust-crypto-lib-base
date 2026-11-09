@@ -4,10 +4,13 @@ version = "0.4.0"
 edition = "2021"
 
 [dependencies]
+alloy-dyn-abi = { version = "1.7", default-features = false, features = ["eip712"] }
+alloy-primitives = { version = "1.7", default-features = false, features = ["serde"] }
+alloy-sol-types = { version = "1.7", default-features = false }
 hex = "0.4.3"
 num-bigint = "0.4.6"
+serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = "1.0.137"
 sha2 = "0.10.8"
-sha3 = "0.10.8"
 starknet = { git = "https://github.com/xJonathanLEI/starknet-rs", tag = "starknet/v0.17.0" }
 starknet-crypto = "0.8.1"  # `starknet` crate doesn't re-export `PoseidonHasher`

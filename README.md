@@ -36,11 +36,13 @@ This is the main entry point of the library. It provides:
 
 ### `src/eip712.rs`
 
-EIP-712 typed data for messages an EVM wallet signs. A withdraw-and-stake must also be signed by its beneficiary's EVM wallet:
+EIP-712 typed data for messages an EVM wallet signs, encoded by [alloy](https://github.com/alloy-rs/core). A withdraw-and-stake must also be signed by its beneficiary's EVM wallet:
 
-- `Eip712Domain`: the zk engine's domain (`Perpetuals` / `1`, EVM chain id, settlement contract). Both the chain id and the contract must be set.
-- `EthAddress`: a 20-byte EVM address, with its EIP-55 checksum form.
-- `WithdrawAndStakeArgs::eip712_struct_hash`, `eip712_hash` and `eip712_typed_data`: the beneficiary's `WithdrawAndStake` EIP-712 message over the same fields the position owner signs.
+- `domain`: the zk engine's domain (`Perpetuals` / `1`, EVM chain id, settlement contract). Both the chain id and the contract must be set.
+- `signing_hash` and `typed_data`: the digest and the `eth_signTypedData_v4` document for any message declared in the module's `sol!` block.
+- `WithdrawAndStakeArgs::eip712_message`, `eip712_hash` and `eip712_typed_data`: the beneficiary's `WithdrawAndStake` message over the same fields the position owner signs.
+
+To add an EVM-signed message, declare it in the `sol!` block (deriving `serde::Serialize`) and pass it to `signing_hash` and `typed_data`.
 
 ---
 

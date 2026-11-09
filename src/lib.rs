@@ -5,11 +5,11 @@ use starknet::core::crypto::ecdsa_sign;
 use starknet::core::types::Felt;
 use std::str::FromStr;
 
-use crate::eip712::{Eip712Domain, EthAddress};
 use crate::starknet_messages::{
     AssetId, LimitOrder, OffChainMessage, Order, PositionId, StarknetDomain, Timestamp,
     TransferArgs, WithdrawAndStakeArgs,
 };
+use alloy_sol_types::Eip712Domain;
 pub mod eip712;
 pub mod starknet_messages;
 
@@ -434,11 +434,11 @@ fn parse_eip712_domain(
 ) -> Result<Eip712Domain, String> {
     let chain_id = u64::from_str_radix(evm_chain_id, 10)
         .map_err(|e| format!("Invalid evm_chain_id: {:?}", e))?;
-    let verifying_contract = EthAddress::from_felt(&parse_eth_address(
-        "verifying_contract_hex",
-        verifying_contract_hex,
-    )?)?;
-    Eip712Domain::new(chain_id, verifying_contract)
+    let verifying_contract = Felt::from_hex(verifying_contract_hex)
+        .map_err(|e| format!("Invalid verifying_contract_hex: {:?}", e))
+        .and_then(|felt| eip712::address_from_felt(&felt))
+        .map_err(|e| format!("Invalid verifying_contract_hex: {}", e))?;
+    eip712::domain(chain_id, verifying_contract)
 }
 
 /// The `eth_signTypedData_v4` JSON document to ask the beneficiary's EVM wallet to sign. Takes the
@@ -790,7 +790,7 @@ mod tests {
         assert_eq!(typed_data["domain"]["chainId"], 31337);
         assert_eq!(
             typed_data["message"]["beneficiary"],
-            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+            "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"
         );
     }
 
