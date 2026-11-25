@@ -1,7 +1,7 @@
 //! EIP-712 typed data for messages an EVM wallet signs, encoded by alloy.
 //!
 //! Every message is signed under the zk engine's domain (`perp-core/src/crypto/evm.rs`):
-//! `Perpetuals` / `1` over the EVM chain id and the settlement contract.
+//! `Perpetuals` / `1` over the EVM chain id and the settlement contract (the governance domain).
 //!
 //! To add a message: declare it in the `sol!` block below (deriving `serde::Serialize`), build it
 //! from the crate's own types, and hand it to [`signing_hash`] and [`typed_data`]. alloy derives
@@ -14,7 +14,7 @@ use serde::Serialize;
 use serde_json::Value;
 use starknet::core::types::Felt;
 
-use crate::starknet_messages::WithdrawAndStakeArgs;
+use crate::starknet_messages::{PositionId, Timestamp, WithdrawAndStakeArgs};
 
 pub const DOMAIN_NAME: &str = "Perpetuals";
 pub const DOMAIN_VERSION: &str = "1";
@@ -32,6 +32,17 @@ sol! {
         address beneficiary;
         uint64 expiration;
         bytes32 salt;
+    }
+
+    /// The position's EVM owner's consent to replacing its Stark key. The engine's
+    /// `Tx::RotatePositionKey` declares the same type; `oldPublicKey` must be the position's
+    /// current key, so the signature can't be replayed once the rotation executes.
+    #[derive(serde::Serialize)]
+    struct RotatePositionKey {
+        uint32 positionId;
+        bytes32 oldPublicKey;
+        bytes32 newPublicKey;
+        uint64 expiration;
     }
 }
 
@@ -124,10 +135,50 @@ impl WithdrawAndStakeArgs {
     }
 }
 
+/// Replaces `position_id`'s Stark key `old_public_key` with `new_public_key`. The position's EVM owner
+/// signs it under the governance domain, and the new key separately signs
+/// [`account_binding_message_hash`](crate::starknet_messages::account_binding_message_hash)`(owner,
+/// new_public_key)` to prove it is held.
+pub struct RotatePositionKeyArgs {
+    pub position_id: PositionId,
+    pub old_public_key: Felt,
+    pub new_public_key: Felt,
+    pub expiration: Timestamp,
+}
+
+impl RotatePositionKeyArgs {
+    /// The owner's EIP-712 message, refusing what the engine would refuse: a zero new key, or one
+    /// equal to the current key.
+    pub fn eip712_message(&self) -> Result<RotatePositionKey, String> {
+        if self.new_public_key == Felt::ZERO {
+            return Err("Invalid new_public_key: must be set".to_string());
+        }
+        if self.new_public_key == self.old_public_key {
+            return Err("Invalid new_public_key: equals old_public_key".to_string());
+        }
+        Ok(RotatePositionKey {
+            positionId: self.position_id.value,
+            oldPublicKey: bytes32_from_felt(&self.old_public_key),
+            newPublicKey: bytes32_from_felt(&self.new_public_key),
+            expiration: self.expiration.seconds,
+        })
+    }
+
+    /// The digest the owner's wallet signs under `domain`.
+    pub fn eip712_hash(&self, domain: &Eip712Domain) -> Result<B256, String> {
+        Ok(signing_hash(&self.eip712_message()?, domain))
+    }
+
+    /// The `eth_signTypedData_v4` document to ask the owner's wallet to sign.
+    pub fn eip712_typed_data(&self, domain: &Eip712Domain) -> Result<Value, String> {
+        typed_data(&self.eip712_message()?, domain)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::starknet_messages::{AssetId, PositionId, Timestamp};
+    use crate::starknet_messages::AssetId;
     use alloy_primitives::{hex, keccak256};
     use starknet::macros::{felt, felt_hex};
 
@@ -288,6 +339,143 @@ mod tests {
         for a in [zero, wide_vault, wide_beneficiary] {
             assert!(a.eip712_hash(&test_domain()).is_err());
             assert!(a.eip712_typed_data(&test_domain()).is_err());
+        }
+    }
+
+    /// The engine's `RotatePositionKey` vector, reproduced with Foundry: position 390776 of Hardhat
+    /// account #1 rotates to the Stark key of secret 0x2222, under the same domain as above.
+    mod rotate_position_key {
+        use super::*;
+        use alloy_primitives::Signature;
+
+        fn args() -> RotatePositionKeyArgs {
+            RotatePositionKeyArgs {
+                position_id: PositionId { value: 390_776 },
+                old_public_key: felt_hex!(
+                    "0x03a68ed59df05e2313925e0f0c83b5951decacdf9109d7d8969541eb8b4b7e89"
+                ),
+                new_public_key: felt_hex!(
+                    "0x06bfa2238af7eb25ad41eb8787234d303b4df22a36d545216bf9b91935636c80"
+                ),
+                expiration: Timestamp {
+                    seconds: 1_800_000_000,
+                },
+            }
+        }
+
+        const OWNER: Address = Address::new(hex!("70997970c51812dc3a010c7d01b50e0d17dc79c8"));
+        const DIGEST: [u8; 32] =
+            hex!("9fa3740d39c1daf2d0aa18e6d8cdc0ceb40cecefa8af1cda5773ad093c157da9");
+        /// Hardhat account #1's signature over [`DIGEST`], r || s || v with v = 27.
+        const OWNER_SIGNATURE: [u8; 65] = hex!("0fc7b72992b36dd94526397905c2f261a581ba3b98ea156bf968dec28af120ad4baa4db7d331ebe1b7851b78eecf09451f16e917d95b493f4707a721f7aa28b51b");
+
+        const DOCUMENT: &str = r#"{
+          "types": {
+            "EIP712Domain": [
+              {"name": "name", "type": "string"},
+              {"name": "version", "type": "string"},
+              {"name": "chainId", "type": "uint256"},
+              {"name": "verifyingContract", "type": "address"}
+            ],
+            "RotatePositionKey": [
+              {"name": "positionId", "type": "uint32"},
+              {"name": "oldPublicKey", "type": "bytes32"},
+              {"name": "newPublicKey", "type": "bytes32"},
+              {"name": "expiration", "type": "uint64"}
+            ]
+          },
+          "primaryType": "RotatePositionKey",
+          "domain": {
+            "name": "Perpetuals",
+            "version": "1",
+            "chainId": 31337,
+            "verifyingContract": "0x1111111111111111111111111111111111111111"
+          },
+          "message": {
+            "positionId": 390776,
+            "oldPublicKey": "0x03a68ed59df05e2313925e0f0c83b5951decacdf9109d7d8969541eb8b4b7e89",
+            "newPublicKey": "0x06bfa2238af7eb25ad41eb8787234d303b4df22a36d545216bf9b91935636c80",
+            "expiration": 1800000000
+          }
+        }"#;
+
+        #[test]
+        fn type_matches_the_engine() {
+            let encode_type = RotatePositionKey::eip712_encode_type();
+            assert_eq!(
+                encode_type,
+                "RotatePositionKey(uint32 positionId,bytes32 oldPublicKey,bytes32 newPublicKey,uint64 expiration)"
+            );
+            assert_eq!(
+                keccak256(encode_type.as_bytes()),
+                hex!("4af8956471b2b9909e49a2616087806fa28217af5fed1821226ead12d2b7c24a")
+            );
+        }
+
+        #[test]
+        fn struct_hash_matches_the_engine() {
+            assert_eq!(
+                args().eip712_message().unwrap().eip712_hash_struct(),
+                hex!("172ff9a337b958ea557feb1c4769c08d4d9cbc00c5b8bea177ce57b27d83f186")
+            );
+        }
+
+        #[test]
+        fn digest_matches_the_engine() {
+            assert_eq!(
+                test_domain().separator(),
+                hex!("c9d781c055757ae11be264b8f8f56bb3dec743e6424ad0c1552083f0e0d5c6a2")
+            );
+            assert_eq!(args().eip712_hash(&test_domain()).unwrap(), DIGEST);
+        }
+
+        #[test]
+        fn owner_signature_recovers_to_the_owner() {
+            let signature = Signature::from_raw_array(&OWNER_SIGNATURE).unwrap();
+            let digest = args().eip712_hash(&test_domain()).unwrap();
+            assert_eq!(
+                signature.recover_address_from_prehash(&digest).unwrap(),
+                OWNER
+            );
+        }
+
+        #[test]
+        fn typed_data_is_the_document_and_hashes_to_the_digest() {
+            let ours = args().eip712_typed_data(&test_domain()).unwrap();
+            let expected: Value = serde_json::from_str(DOCUMENT).unwrap();
+            assert_eq!(ours, expected);
+            let as_a_wallet_reads_it: TypedData = serde_json::from_value(ours).unwrap();
+            assert_eq!(as_a_wallet_reads_it.eip712_signing_hash().unwrap(), DIGEST);
+        }
+
+        #[test]
+        fn every_field_and_the_domain_change_the_digest() {
+            let base = args().eip712_hash(&test_domain()).unwrap();
+            let changed: [fn(&mut RotatePositionKeyArgs); 4] = [
+                |a| a.position_id.value += 1,
+                |a| a.old_public_key += Felt::ONE,
+                |a| a.new_public_key += Felt::ONE,
+                |a| a.expiration.seconds += 1,
+            ];
+            for change in changed {
+                let mut a = args();
+                change(&mut a);
+                assert_ne!(a.eip712_hash(&test_domain()).unwrap(), base);
+            }
+            let other_chain = domain(1, Address::repeat_byte(0x11)).unwrap();
+            assert_ne!(args().eip712_hash(&other_chain).unwrap(), base);
+        }
+
+        #[test]
+        fn refuses_a_zero_or_unchanged_new_key() {
+            let mut zero = args();
+            zero.new_public_key = Felt::ZERO;
+            let mut unchanged = args();
+            unchanged.new_public_key = unchanged.old_public_key;
+            for a in [zero, unchanged] {
+                assert!(a.eip712_hash(&test_domain()).is_err());
+                assert!(a.eip712_typed_data(&test_domain()).is_err());
+            }
         }
     }
 }

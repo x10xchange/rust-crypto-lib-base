@@ -24,6 +24,9 @@ This is the main entry point of the library. It provides:
   - `get_withdraw_and_stake_hash`: Computes the hash for a withdraw-and-stake message, given all its parameters as strings. `vault` and `beneficiary` are EVM addresses and must fit in 160 bits.
   - `get_withdraw_and_stake_eip712_typed_data`: Returns the `eth_signTypedData_v4` JSON document the withdraw-and-stake beneficiary's EVM wallet signs. Takes the same withdraw-and-stake inputs as `get_withdraw_and_stake_hash`, plus the EVM chain id and the settlement contract (`verifying_contract_hex`) of the EIP-712 domain.
   - `get_withdraw_and_stake_eip712_hash`: Returns the 32-byte EIP-712 digest (hex) of that same document, for checking a wallet's signature.
+  - `get_rotate_position_key_eip712_typed_data`: Returns the `eth_signTypedData_v4` JSON document a position's EVM owner signs to replace the position's Stark key. Takes the position id, the current (`old_public_key_hex`) and new (`new_public_key_hex`) Stark public keys, the expiration (unix seconds), and the same EIP-712 domain as withdraw-and-stake. Keys are signed as left-padded `bytes32` and may be passed with or without leading zeros; non-canonical felts, a zero new key and an unchanged key are refused, as the engine refuses them.
+  - `get_rotate_position_key_eip712_hash`: Returns the 32-byte EIP-712 digest (hex) of that same document.
+  - `get_account_binding_message_hash`: Returns `Pedersen(wallet, public_key)`, the message a Stark key signs to bind itself to an EVM wallet. Account registration uses it, and a key rotation's new key signs it with the position's owner as the wallet.
 
 - **Types**
 
@@ -36,11 +39,12 @@ This is the main entry point of the library. It provides:
 
 ### `src/eip712.rs`
 
-EIP-712 typed data for messages an EVM wallet signs, encoded by [alloy](https://github.com/alloy-rs/core). A withdraw-and-stake must also be signed by its beneficiary's EVM wallet:
+EIP-712 typed data for messages an EVM wallet signs, encoded by [alloy](https://github.com/alloy-rs/core). A withdraw-and-stake must also be signed by its beneficiary's EVM wallet, and a position key rotation by the position's EVM owner:
 
 - `domain`: the zk engine's domain (`Perpetuals` / `1`, EVM chain id, settlement contract). Both the chain id and the contract must be set.
 - `signing_hash` and `typed_data`: the digest and the `eth_signTypedData_v4` document for any message declared in the module's `sol!` block.
 - `WithdrawAndStakeArgs::eip712_message`, `eip712_hash` and `eip712_typed_data`: the beneficiary's `WithdrawAndStake` message over the same fields the position owner signs.
+- `RotatePositionKeyArgs::eip712_message`, `eip712_hash` and `eip712_typed_data`: the position owner's `RotatePositionKey(uint32 positionId,bytes32 oldPublicKey,bytes32 newPublicKey,uint64 expiration)` consent to replacing the position's Stark key. The new key must also sign `get_account_binding_message_hash(owner, new_public_key)`.
 
 To add an EVM-signed message, declare it in the `sol!` block (deriving `serde::Serialize`) and pass it to `signing_hash` and `typed_data`.
 
@@ -60,6 +64,7 @@ This module defines the core data structures and hashing logic for StarkNet off-
   - `StarknetDomain`: Represents the domain for message separation (name, version, chain_id, revision).
   - `AssetId`, `PositionId`, `AssetAmount`, `Timestamp`: Basic types for message construction.
   - `Order`, `TransferArgs`, `WithdrawalArgs`, `WithdrawAndStakeArgs`: Main message types for orders, transfers, withdrawals, and withdraw-and-stake.
+  - `account_binding_message_hash`: the raw `Pedersen(wallet, public_key)` that binds a Stark key to an EVM wallet.
 
 - **Hash Implementations**
 

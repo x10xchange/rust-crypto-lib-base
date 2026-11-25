@@ -1,3 +1,4 @@
+use starknet::core::crypto::pedersen_hash;
 use starknet::core::utils::cairo_short_string_to_felt;
 
 use starknet::core::types::Felt;
@@ -231,6 +232,14 @@ impl Hashable for WithdrawAndStakeArgs {
 }
 
 impl OffChainMessage for WithdrawAndStakeArgs {}
+
+/// The message a Stark key signs to bind itself to an EVM wallet: raw `Pedersen(wallet, public_key)`,
+/// with no SNIP-12 domain or position. Account registration, `NewEvmPosition` and
+/// `RotatePositionKey` (signed by the new key) all use it; the engine's
+/// `account_binding_message_hash` in `perp-core/src/crypto/stark.rs` computes the same.
+pub fn account_binding_message_hash(wallet: Felt, public_key: Felt) -> Felt {
+    pedersen_hash(&wallet, &public_key)
+}
 
 #[cfg(test)]
 mod tests {
@@ -497,5 +506,18 @@ mod tests {
             Felt::from_hex("0x6344a601c7665a748259e9535e66cc753eb88ad28f9bb1419906e8bf2c1edf2")
                 .unwrap();
         assert_eq!(actual, expected, "Hashes do not match for LimitOrder");
+    }
+
+    /// The engine's key-rotation vector: Hardhat account #1 bound to the Stark key of secret 0x2222.
+    #[test]
+    fn test_account_binding_message_hash() {
+        let actual = account_binding_message_hash(
+            felt_hex!("0x70997970c51812dc3a010c7d01b50e0d17dc79c8"),
+            felt_hex!("0x06bfa2238af7eb25ad41eb8787234d303b4df22a36d545216bf9b91935636c80"),
+        );
+        assert_eq!(
+            actual,
+            felt_hex!("0x0753b89eff476c4dd3756cb8ddab3808fad9848368499b075bc4a5ea8ed88bb4")
+        );
     }
 }

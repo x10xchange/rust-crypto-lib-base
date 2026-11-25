@@ -5,9 +5,10 @@ use starknet::core::crypto::ecdsa_sign;
 use starknet::core::types::Felt;
 use std::str::FromStr;
 
+use crate::eip712::RotatePositionKeyArgs;
 use crate::starknet_messages::{
-    AssetId, LimitOrder, OffChainMessage, Order, PositionId, StarknetDomain, Timestamp,
-    TransferArgs, WithdrawAndStakeArgs,
+    account_binding_message_hash, AssetId, LimitOrder, OffChainMessage, Order, PositionId,
+    StarknetDomain, Timestamp, TransferArgs, WithdrawAndStakeArgs,
 };
 use alloy_sol_types::Eip712Domain;
 pub mod eip712;
@@ -493,6 +494,99 @@ pub fn get_withdraw_and_stake_eip712_hash(
     Ok(format!("0x{}", hex::encode(args.eip712_hash(&domain)?)))
 }
 
+/// Parses a hex felt (`0x`-prefixed, with or without leading zeros), refusing values of the field
+/// prime or more, which `Felt::from_hex` would silently reduce: the engine refuses non-canonical keys.
+fn parse_canonical_felt(name: &str, hex: &str) -> Result<Felt, String> {
+    let felt = Felt::from_hex(hex).map_err(|e| format!("Invalid {}: {:?}", name, e))?;
+    let digits = hex
+        .trim_start_matches("0x")
+        .trim_start_matches('0')
+        .to_ascii_lowercase();
+    let canonical = felt.to_hex_string();
+    let canonical = canonical.trim_start_matches("0x").trim_start_matches('0');
+    if digits != canonical {
+        return Err(format!("Invalid {}: not a canonical felt", name));
+    }
+    Ok(felt)
+}
+
+/// The `RotatePositionKeyArgs` the position's EVM owner signs. Keys are Stark public keys (felts),
+/// signed as left-padded `bytes32`.
+fn parse_rotate_position_key_args(
+    position_id: &str,
+    old_public_key_hex: &str,
+    new_public_key_hex: &str,
+    expiration: &str,
+) -> Result<RotatePositionKeyArgs, String> {
+    let position_id = u32::from_str_radix(position_id, 10)
+        .map_err(|e| format!("Invalid position_id: {:?}", e))?;
+    let old_public_key = parse_canonical_felt("old_public_key_hex", old_public_key_hex)?;
+    let new_public_key = parse_canonical_felt("new_public_key_hex", new_public_key_hex)?;
+    let expiration =
+        u64::from_str_radix(expiration, 10).map_err(|e| format!("Invalid expiration: {:?}", e))?;
+    Ok(RotatePositionKeyArgs {
+        position_id: PositionId { value: position_id },
+        old_public_key,
+        new_public_key,
+        expiration: Timestamp {
+            seconds: expiration,
+        },
+    })
+}
+
+/// The `eth_signTypedData_v4` JSON document to ask the position's EVM owner to sign, consenting to
+/// replace the position's Stark key `old_public_key_hex` (its current key) with `new_public_key_hex`
+/// until `expiration` (unix seconds). Signed under the same EIP-712 domain as withdraw-and-stake.
+pub fn get_rotate_position_key_eip712_typed_data(
+    position_id: String,
+    old_public_key_hex: String,
+    new_public_key_hex: String,
+    expiration: String,
+    evm_chain_id: String,
+    verifying_contract_hex: String,
+) -> Result<String, String> {
+    let args = parse_rotate_position_key_args(
+        &position_id,
+        &old_public_key_hex,
+        &new_public_key_hex,
+        &expiration,
+    )?;
+    let domain = parse_eip712_domain(&evm_chain_id, &verifying_contract_hex)?;
+    Ok(args.eip712_typed_data(&domain)?.to_string())
+}
+
+/// The 32-byte EIP-712 digest (`0x`-prefixed hex) the owner's wallet signs for the document
+/// [`get_rotate_position_key_eip712_typed_data`] returns.
+pub fn get_rotate_position_key_eip712_hash(
+    position_id: String,
+    old_public_key_hex: String,
+    new_public_key_hex: String,
+    expiration: String,
+    evm_chain_id: String,
+    verifying_contract_hex: String,
+) -> Result<String, String> {
+    let args = parse_rotate_position_key_args(
+        &position_id,
+        &old_public_key_hex,
+        &new_public_key_hex,
+        &expiration,
+    )?;
+    let domain = parse_eip712_domain(&evm_chain_id, &verifying_contract_hex)?;
+    Ok(format!("0x{}", hex::encode(args.eip712_hash(&domain)?)))
+}
+
+/// The message the Stark key `public_key_hex` signs to bind itself to the EVM wallet
+/// `wallet_address_hex`: `Pedersen(wallet, public_key)`. Account registration uses it, and a key
+/// rotation's new key signs it with the position's owner as the wallet.
+pub fn get_account_binding_message_hash(
+    wallet_address_hex: String,
+    public_key_hex: String,
+) -> Result<Felt, String> {
+    let wallet = parse_eth_address("wallet_address_hex", &wallet_address_hex)?;
+    let public_key = parse_canonical_felt("public_key_hex", &public_key_hex)?;
+    Ok(account_binding_message_hash(wallet, public_key))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -809,5 +903,158 @@ mod tests {
             "0x0".to_string(),
         )
         .is_err());
+    }
+
+    // The engine's RotatePositionKey vector, reproduced with Foundry: Hardhat account #1 rotates
+    // position 390776 to the Stark key of secret 0x2222.
+    const ROTATION_OLD_KEY: &str =
+        "0x03a68ed59df05e2313925e0f0c83b5951decacdf9109d7d8969541eb8b4b7e89";
+    const ROTATION_NEW_KEY: &str =
+        "0x06bfa2238af7eb25ad41eb8787234d303b4df22a36d545216bf9b91935636c80";
+    const ROTATION_OWNER: &str = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8";
+
+    fn rotate_position_key_eip712(
+        f: fn(String, String, String, String, String, String) -> Result<String, String>,
+        old_public_key_hex: &str,
+        new_public_key_hex: &str,
+        verifying_contract_hex: &str,
+    ) -> Result<String, String> {
+        f(
+            "390776".to_string(),
+            old_public_key_hex.to_string(),
+            new_public_key_hex.to_string(),
+            "1800000000".to_string(),
+            "31337".to_string(),
+            verifying_contract_hex.to_string(),
+        )
+    }
+
+    #[test]
+    fn test_get_rotate_position_key_eip712_hash() {
+        let contract = "0x1111111111111111111111111111111111111111";
+        let digest = "0x9fa3740d39c1daf2d0aa18e6d8cdc0ceb40cecefa8af1cda5773ad093c157da9";
+        assert_eq!(
+            rotate_position_key_eip712(
+                get_rotate_position_key_eip712_hash,
+                ROTATION_OLD_KEY,
+                ROTATION_NEW_KEY,
+                contract
+            )
+            .unwrap(),
+            digest
+        );
+        // Keys without their leading zeros are the same bytes32.
+        assert_eq!(
+            rotate_position_key_eip712(
+                get_rotate_position_key_eip712_hash,
+                "0x3a68ed59df05e2313925e0f0c83b5951decacdf9109d7d8969541eb8b4b7e89",
+                "0x6bfa2238af7eb25ad41eb8787234d303b4df22a36d545216bf9b91935636c80",
+                contract
+            )
+            .unwrap(),
+            digest
+        );
+    }
+
+    #[test]
+    fn test_get_rotate_position_key_eip712_typed_data() {
+        let typed_data: serde_json::Value = serde_json::from_str(
+            &rotate_position_key_eip712(
+                get_rotate_position_key_eip712_typed_data,
+                "0x3a68ed59df05e2313925e0f0c83b5951decacdf9109d7d8969541eb8b4b7e89",
+                ROTATION_NEW_KEY,
+                "0x1111111111111111111111111111111111111111",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(typed_data["primaryType"], "RotatePositionKey");
+        assert_eq!(typed_data["domain"]["name"], "Perpetuals");
+        assert_eq!(typed_data["domain"]["version"], "1");
+        assert_eq!(typed_data["domain"]["chainId"], 31337);
+        assert_eq!(typed_data["message"]["positionId"], 390776);
+        assert_eq!(typed_data["message"]["oldPublicKey"], ROTATION_OLD_KEY);
+        assert_eq!(typed_data["message"]["newPublicKey"], ROTATION_NEW_KEY);
+        assert_eq!(typed_data["message"]["expiration"], 1800000000u64);
+    }
+
+    #[test]
+    fn test_get_rotate_position_key_eip712_refuses_bad_input() {
+        let contract = "0x1111111111111111111111111111111111111111";
+        let prime = "0x0800000000000011000000000000000000000000000000000000000000000001";
+        for (old, new, contract) in [
+            (ROTATION_OLD_KEY, ROTATION_NEW_KEY, "0x0"), // unset domain
+            (ROTATION_OLD_KEY, "0x0", contract),         // zero new key
+            (ROTATION_OLD_KEY, ROTATION_OLD_KEY, contract), // unchanged key
+            (ROTATION_OLD_KEY, prime, contract),         // non-canonical new key
+            (prime, ROTATION_NEW_KEY, contract),         // non-canonical old key
+        ] {
+            assert!(rotate_position_key_eip712(
+                get_rotate_position_key_eip712_hash,
+                old,
+                new,
+                contract
+            )
+            .is_err());
+            assert!(rotate_position_key_eip712(
+                get_rotate_position_key_eip712_typed_data,
+                old,
+                new,
+                contract
+            )
+            .is_err());
+        }
+    }
+
+    /// The new key's binding: the message matches the engine's, and the new key's RFC 6979
+    /// signature over it is the vector's.
+    #[test]
+    fn test_get_account_binding_message_hash() {
+        let message = get_account_binding_message_hash(
+            ROTATION_OWNER.to_string(),
+            ROTATION_NEW_KEY.to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            message,
+            Felt::from_hex("0x0753b89eff476c4dd3756cb8ddab3808fad9848368499b075bc4a5ea8ed88bb4")
+                .unwrap()
+        );
+        // Unpadded and checksummed inputs parse the same.
+        assert_eq!(
+            get_account_binding_message_hash(
+                "0x70997970C51812dc3A010C7d01b50e0d17dc79C8".to_string(),
+                "0x6bfa2238af7eb25ad41eb8787234d303b4df22a36d545216bf9b91935636c80".to_string(),
+            )
+            .unwrap(),
+            message
+        );
+
+        let r =
+            Felt::from_hex("0x03a806d5b2e8ec2205f2a1d460b002af51ad45bb9a525aacef57d84e78d01fef")
+                .unwrap();
+        let s =
+            Felt::from_hex("0x07c091163ea717f326d1b83a456e9a0ef5098731b010224cdd66b1995a792328")
+                .unwrap();
+        let secret = Felt::from_hex("0x2222").unwrap();
+        assert!(starknet::core::crypto::ecdsa_verify(
+            &Felt::from_hex(ROTATION_NEW_KEY).unwrap(),
+            &message,
+            &starknet::core::crypto::Signature { r, s },
+        )
+        .unwrap());
+        let signature = sign_message(&message, &secret).unwrap();
+        assert_eq!((signature.r, signature.s), (r, s));
+    }
+
+    #[test]
+    fn test_get_account_binding_message_hash_refuses_bad_input() {
+        let too_wide = format!("0x1{}", "0".repeat(40)); // 2^160
+        assert!(get_account_binding_message_hash(too_wide, ROTATION_NEW_KEY.to_string()).is_err());
+        let prime = "0x800000000000011000000000000000000000000000000000000000000000001";
+        assert!(
+            get_account_binding_message_hash(ROTATION_OWNER.to_string(), prime.to_string())
+                .is_err()
+        );
     }
 }
